@@ -12,35 +12,38 @@ import matplotlib.pyplot as plt
 INPUT_FILE = "scan_results.json"
 
 def plot_field():
-    """Load scanned data from a JSON file and visualize the EM field in dBm."""
+    """Plot the EM field strength from the scan results."""
+    # Load scan results
     with open(INPUT_FILE, "r") as f:
-        data = json.load(f)
-    
-    # Extract x, y, and field strength values
-    x = np.array([point["x"] for point in data])
-    y = np.array([point["y"] for point in data])
-    field_strength = np.array([point["field_strength"] for point in data])
-    
-    # Determine grid dimensions
-    grid_size_x = len(np.unique(x))
-    grid_size_y = len(np.unique(y))
-    
-    # Ensure grid dimensions are valid for contour plotting
-    if grid_size_x < 2 or grid_size_y < 2:
-        raise ValueError("Grid dimensions must be at least 2x2 for contour plotting.")
-    
-    # Reshape data into 2D grids
-    X = x.reshape(grid_size_y, grid_size_x)
-    Y = y.reshape(grid_size_y, grid_size_x)
-    Z = field_strength.reshape(grid_size_y, grid_size_x)
-    
-    # Plot the EM field
-    plt.figure(figsize=(10, 8))
-    plt.contourf(X, Y, Z, cmap='viridis')
-    plt.colorbar(label='Field Strength (dBm)')
-    plt.title('Measured EM Field in dBm')
-    plt.xlabel('X Position (m)')
-    plt.ylabel('Y Position (m)')
+        results = json.load(f)
+
+    # Extract x, y, and field_strength values
+    x = np.array([point["x"] for point in results]) * 100  # Convert from meters to cm
+    y = np.array([point["y"] for point in results]) * 100  # Convert from meters to cm
+    field_strength = np.array([point["field_strength"] for point in results])
+
+    # Reshape data for plotting
+    unique_x = np.unique(x)
+    unique_y = np.unique(y)
+    X, Y = np.meshgrid(unique_x, unique_y)
+    Z = field_strength.reshape(len(unique_y), len(unique_x))
+
+    # Calculate PCB aspect ratio
+    pcb_width = unique_x[-1] - unique_x[0]
+    pcb_height = unique_y[-1] - unique_y[0]
+    aspect_ratio = pcb_width / pcb_height
+
+    # Plot the field strength
+    plt.figure(figsize=(8 * aspect_ratio, 8))  # Adjust figure size based on aspect ratio
+    plt.contourf(X, Y, Z, cmap="viridis")
+    plt.colorbar(label="Field Strength (dBm)")
+    plt.xlabel("X (cm)")
+    plt.ylabel("Y (cm)")
+    plt.title("EM Field Strength")
+
+    # Ensure the aspect ratio matches the PCB's rectangular shape
+    plt.gca().set_aspect('equal', adjustable='box')
+
     plt.show()
 
 if __name__ == "__main__":
