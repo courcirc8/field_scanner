@@ -1,3 +1,21 @@
+"""
+USRP Power Measurement Module
+
+This module provides functions to initialize a USRP (Universal Software Radio Peripheral) 
+and measure the input power of received signals. It is used as part of the field scanner 
+to estimate the EM field strength at each point on the PCB grid.
+
+Implemented Features:
+- USRP initialization with configurable frequency, gain, and bandwidth.
+- Frame reception and power estimation in dBm.
+- Error handling for USRP initialization and frame reception.
+
+Missing Features:
+- Support for multiple channels or advanced USRP configurations.
+- Integration with other SDR platforms for broader compatibility.
+- Improved error handling and logging for debugging.
+"""
+
 import uhd
 import numpy as np
 

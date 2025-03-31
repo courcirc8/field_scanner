@@ -1,9 +1,33 @@
+"""
+Field Scanner Implementation
+
+This script implements the core functionality of a near-field scanner to visualize 
+the electromagnetic (EM) field strength at a given frequency. The scanner uses a 
+3D printer to move a probe along the XY axis and a software-defined radio (USRP B205) 
+to measure the EM field strength at each point. The results are saved to a JSON file 
+and visualized using Python.
+
+Implemented Features:
+- PCB grid generation based on user-defined size and resolution.
+- Communication with a 3D printer using G-code commands (simulated or real).
+- USRP initialization and power measurement using the `measure_power` module.
+- Interactive plot updates during the scanning process.
+- Final plot generation with proper scaling and colorbar.
+
+Missing Features:
+- Integration with a real 3D printer for physical probe movement.
+- Error handling for edge cases such as communication failures with the printer or USRP.
+- Optimization for faster scanning and plotting.
+- Advanced visualization options (e.g., 3D plots or heatmaps with interpolation).
+"""
+
 import numpy as np
 import json
 import socket
 import matplotlib.pyplot as plt
 from measure_power import initialize_radio, receive_frame  # Import the updated functions
 from plot_field import plot_field  # Import the plotting function
+from d3d_printer import PrinterConnection  # Import the PrinterConnection class
 
 # PCB-related constants
 PCB_SIZE_CM = (3, 2)  # PCB size in centimeters (width, height)
@@ -31,9 +55,9 @@ WAVELENGTH = 3e8 / CENTER_FREQUENCY  # Speed of light divided by frequency
 SIMULATE_USRP = False     # Set to True to simulate the USRP
 
 # 3D printer configuration
-PRINTER_IP = "192.168.1.100"  # Replace with the actual IP of the 3D printer
+PRINTER_IP = "192.168.1.127"  # Replace with the actual IP of the 3D printer
 PRINTER_PORT = 23  # Default Telnet port for G-code communication
-SIMULATE_PRINTER = True  # Set to True to simulate the printer
+SIMULATE_PRINTER = False  # Set to True to simulate the printer
 INIT_GCODE = "G28"  # Example initialization G-code command
 
 # Output configuration
@@ -135,6 +159,15 @@ def scan_field():
             print("Failed to initialize radio. Exiting scan.")
             return
 
+    # Initialize the 3D printer connection
+    printer = PrinterConnection(PRINTER_IP, PRINTER_PORT)
+    printer.connect()
+
+    # Terminate if the printer connection fails
+    if not printer.socket:
+        print("Failed to connect to the 3D printer. Exiting scan.")
+        return
+
     # Initialize the interactive plot
     fig, ax, contour, colorbar = initialize_plot()
 
@@ -157,14 +190,15 @@ def scan_field():
             if (i + 1) % 10 == 0:
                 contour = update_plot(ax, contour, colorbar, results, x_values, y_values)
     else:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as printer_socket:
-            printer_socket.connect((PRINTER_IP, PRINTER_PORT))
-            send_gcode_command(INIT_GCODE, printer_socket)  # Send initialization G-code
+        try:
+            # Initialize the printer (home axes and calibrate Z-axis)
+            printer.initialize_printer()
+
             for i, (y, x) in enumerate(np.ndindex(len(y_values), len(x_values))):
                 # Move the probe to the (x, y) position
-                gcode_command = f"G1 X{x_values[x]:.3f} Y{y_values[y]:.3f}"
-                send_gcode_command(gcode_command, printer_socket)
-                
+                print(f"Moving probe to X={x_values[x]:.3f}, Y={y_values[y]:.3f}")
+                printer.move_probe(x=x_values[x] * 100, y=y_values[y] * 100)  # Convert to cm
+
                 # Measure the field strength
                 field_strength = measure_field_strength(usrp, streamer)
                 if field_strength is not None:
@@ -177,6 +211,9 @@ def scan_field():
                 # Update the plot every 10 measurements
                 if (i + 1) % 10 == 0:
                     contour = update_plot(ax, contour, colorbar, results, x_values, y_values)
+        finally:
+            # Ensure the printer is disconnected properly
+            printer.disconnect()
     
     # Save results to a JSON file
     with open(OUTPUT_FILE, "w") as f:

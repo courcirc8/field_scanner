@@ -1,3 +1,21 @@
+"""
+USRP Continuous Streaming Test
+
+This script tests the continuous streaming capabilities of a USRP device. It receives 
+a specified number of samples, stores them in a buffer, and estimates the input power. 
+It is intended for debugging and performance testing.
+
+Implemented Features:
+- USRP initialization with configurable frequency, gain, and sample rate.
+- Continuous streaming and reception of a specified number of samples.
+- Power estimation in dBm from received samples.
+
+Missing Features:
+- Support for testing advanced streaming modes (e.g., burst mode).
+- Error handling for streaming interruptions or metadata errors.
+- Integration with automated test frameworks for performance benchmarking.
+"""
+
 import uhd
 import numpy as np
 

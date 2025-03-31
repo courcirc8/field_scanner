@@ -1,3 +1,21 @@
+"""
+USRP Test Script
+
+This script tests the basic functionality of a USRP device, including initialization, 
+streaming, and power estimation. It is intended for debugging and verifying the USRP 
+setup before integrating it into the field scanner.
+
+Implemented Features:
+- USRP initialization with configurable frequency, gain, and bandwidth.
+- Streaming and reception of samples.
+- Power estimation in dBm from received samples.
+
+Missing Features:
+- Comprehensive testing for edge cases (e.g., invalid configurations).
+- Support for testing multiple channels or advanced USRP features.
+- Integration with automated test frameworks for continuous testing.
+"""
+
 import uhd
 import time
 import numpy as np

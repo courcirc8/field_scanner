@@ -1,9 +1,21 @@
-# The goal of this code is to implement a near-field scanner to visuialize EM field strenght at agiven frequency.
-# A 3D printer is used to move the probe on th XY axis. The probe is used to measure the EM field strenght at each point.
-# The printer using reprap duet 2 is controlled using G-code commands through ethernet.
-# The software defined radio used for measurement is USRP B205.
-# The data is then processed and visualized using python.
-# the code is divided into 2 parts scanner.py to record the field and save a json the result and plot_field.py to visualize the field.
+"""
+Field Visualization Module
+
+This script visualizes the EM field strength recorded by the field scanner. It reads 
+the results from a JSON file, reshapes the data into a grid, and generates a contour 
+plot with proper scaling and aspect ratio.
+
+Implemented Features:
+- Loading scan results from a JSON file.
+- Reshaping data into a grid for plotting.
+- Contour plot generation with a colorbar and proper aspect ratio.
+- User prompt to close the plot after visualization.
+
+Missing Features:
+- Advanced visualization options (e.g., 3D plots or interactive plots).
+- Support for exporting plots to image files (e.g., PNG, PDF).
+- Error handling for invalid or missing input files.
+"""
 
 import json
 import numpy as np
