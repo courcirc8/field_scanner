@@ -44,7 +44,11 @@ def plot_field():
     # Ensure the aspect ratio matches the PCB's rectangular shape
     plt.gca().set_aspect('equal', adjustable='box')
 
-    plt.show()
+    # Show the plot and block until the window is closed
+    plt.show(block=True)
+
+    # Prompt the user to press Enter to exit the program
+    input("Press Enter to exit the program.")
 
 if __name__ == "__main__":
     plot_field()
