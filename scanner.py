@@ -25,7 +25,7 @@ import numpy as np
 import json
 import socket
 import matplotlib.pyplot as plt
-from measure_power import initialize_radio, receive_frame  # Import the updated functions
+from measure_power import initialize_radio, receive_frame, get_power_dBm  # Import the updated functions
 from plot_field import plot_field  # Import the plotting function
 from d3d_printer import PrinterConnection  # Import the PrinterConnection class
 
@@ -49,10 +49,11 @@ X, Y = np.meshgrid(x_values, y_values)
 
 # Radio measurement configuration
 CENTER_FREQUENCY = 400e6  # Center frequency in Hz (default: 400 MHz)
-EQUIVALENT_BW = 50e6      # Equivalent bandwidth in Hz (default: 50 MHz)
-RX_GAIN = 10              # Receiver gain in dB
+EQUIVALENT_BW = 10e6      # Equivalent bandwidth in Hz (default: 50 MHz)
+RX_GAIN = 76              # Receiver gain in dB
 WAVELENGTH = 3e8 / CENTER_FREQUENCY  # Speed of light divided by frequency
 SIMULATE_USRP = False     # Set to True to simulate the USRP
+nb_avera = 100 # Number of measurements to average
 
 # 3D printer configuration
 PRINTER_IP = "192.168.1.100"  # Replace with the actual IP of the 3D printer
@@ -85,9 +86,9 @@ def measure_field_strength(usrp, streamer):
             print(f"Simulated power: {power_linear:.6f} linear, {input_power_dbm:.2f} dBm (input)")
         return input_power_dbm
     else:
-        # Use receive_frame function to get the power
+        # Use get_power_dBm function to get the average power
         try:
-            return receive_frame(streamer, RX_GAIN)
+            return get_power_dBm(streamer, RX_GAIN)
         except Exception as e:
             print(f"Error measuring field strength: {e}")
             return None
@@ -156,6 +157,7 @@ def move_around_perimeter(printer, pcb_width, pcb_height, z_height):
     :param z_height: Adjusted Z height to use for movements.
     """
     import tkinter as tk
+    import queue
 
     # Ensure the printer is in absolute positioning mode
     printer.send_gcode("G90")  # Set absolute positioning
@@ -163,7 +165,7 @@ def move_around_perimeter(printer, pcb_width, pcb_height, z_height):
     def stop_movement():
         nonlocal done
         done = True
-        root.destroy()
+        root.quit()  # Safely exit the main loop
 
     # Create the Tkinter window
     root = tk.Tk()
@@ -172,34 +174,52 @@ def move_around_perimeter(printer, pcb_width, pcb_height, z_height):
     tk.Button(root, text="Done", command=stop_movement).pack(pady=20)
 
     done = False
-    print("Cycling around the PCB perimeter for adjustment...")
+    command_queue = queue.Queue()
 
     def cycle_perimeter():
         while not done:
-            printer.move_probe(x=0, y=0, z=z_height, feedrate=800)  # Bottom-left corner
-            printer.move_probe(x=pcb_width * 10, y=0, z=z_height, feedrate=800)  # Bottom-right corner
-            printer.move_probe(x=pcb_width * 10, y=pcb_height * 10, z=z_height, feedrate=800)  # Top-right corner
-            printer.move_probe(x=0, y=pcb_height * 10, z=z_height, feedrate=800)  # Top-left corner
-            printer.move_probe(x=0, y=0, z=z_height, feedrate=800)  # Return to bottom-left corner
+            command_queue.put((0, 0))  # Bottom-left corner
+            command_queue.put((pcb_width * 10, 0))  # Bottom-right corner
+            command_queue.put((pcb_width * 10, pcb_height * 10))  # Top-right corner
+            command_queue.put((0, pcb_height * 10))  # Top-left corner
+            command_queue.put((0, 0))  # Return to bottom-left corner
 
-    # Run the perimeter cycling in a separate thread
+    def process_commands():
+        if not command_queue.empty():
+            x, y = command_queue.get()
+            printer.move_probe(x=x, y=y, z=z_height, feedrate=800)
+        if not done:
+            root.after(100, process_commands)  # Schedule the next command processing
+
+    # Start the perimeter cycling in a separate thread
     import threading
     threading.Thread(target=cycle_perimeter, daemon=True).start()
 
-    # Run the Tkinter event loop
+    # Start processing commands on the main thread
+    process_commands()
+
+    # Run the Tkinter event loop on the main thread
     root.mainloop()
 
     # Ensure the printer returns to the starting position after the "Done" button is pressed
     print("Returning to starting position...")
     printer.move_probe(x=0, y=0, z=z_height, feedrate=800)
 
-def adjust_pcb_height(printer):
+def adjust_pcb_height(printer, usrp, streamer):
     """
     Adjust the PCB height and allow the user to set the Z position for probing.
+    Includes real-time radio power measurement and display.
 
     :param printer: PrinterConnection object.
+    :param usrp: USRP object for power measurement.
+    :param streamer: Streamer object for power measurement.
     :return: Final Z height to be used for probing.
     """
+    import tkinter as tk
+    import queue
+    import threading
+    import time
+
     # Ensure the printer is in absolute positioning mode
     printer.send_gcode("G90")  # Set absolute positioning
 
@@ -208,9 +228,26 @@ def adjust_pcb_height(printer):
 
     # Initialize the Z height
     z_height = 30  # Start at 3 cm
+    power_queue = queue.Queue()
 
     # Create a popup window for user adjustment
-    import tkinter as tk
+    def measure_power():
+        """Measure the radio power and update the queue."""
+        while not done:
+            if SIMULATE_USRP:
+                power = np.random.uniform(-70, -50)  # Simulated power in dBm
+            else:
+                power = measure_field_strength(usrp, streamer)
+            power_queue.put(power)
+            time.sleep(1)  # Update every second
+
+    def update_power_label():
+        """Update the power label from the queue."""
+        if not power_queue.empty():
+            power = power_queue.get()
+            power_label.config(text=f"Power: {power:.2f} dBm")
+        if not done:
+            root.after(100, update_power_label)  # Schedule the next update
 
     def move_up_1cm():
         nonlocal z_height
@@ -232,20 +269,32 @@ def adjust_pcb_height(printer):
         z_height -= 10
         printer.move_probe(x=0, y=0, z=z_height, feedrate=3000)
 
-    def done():
-        root.destroy()
+    def done_callback():
+        nonlocal done
+        done = True
+        root.quit()  # Safely exit the main loop
 
-    # Create the Tkinter window
     root = tk.Tk()
     root.title("Adjust PCB Height")
-    root.geometry("200x300")
+    root.geometry("300x400")
 
     # Add buttons for adjustment
     tk.Button(root, text="Move up by 1 cm", command=move_up_1cm).pack(pady=10)
     tk.Button(root, text="Move up by 1 mm", command=move_up_1mm).pack(pady=10)
-    tk.Button(root, text="Done", command=done).pack(pady=10)
     tk.Button(root, text="Move down by 1 mm", command=move_down_1mm).pack(pady=10)
     tk.Button(root, text="Move down by 1 cm", command=move_down_1cm).pack(pady=10)
+    tk.Button(root, text="Done", command=done_callback).pack(pady=10)
+
+    # Add a label to display the measured power
+    power_label = tk.Label(root, text="Power: -- dBm", font=("Helvetica", 14))
+    power_label.pack(pady=20)
+
+    # Start a thread for real-time power updates
+    done = False
+    threading.Thread(target=measure_power, daemon=True).start()
+
+    # Start updating the power label on the main thread
+    update_power_label()
 
     # Run the Tkinter event loop
     root.mainloop()
@@ -279,7 +328,7 @@ def scan_field():
         printer.initialize_printer()
 
         # Adjust PCB height and get the final Z height
-        z_height = adjust_pcb_height(printer)
+        z_height = adjust_pcb_height(printer, usrp, streamer)
 
         # Move around the PCB perimeter for adjustment using the adjusted Z height
         move_around_perimeter(printer, PCB_SIZE_CM[0], PCB_SIZE_CM[1], z_height)
