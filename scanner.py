@@ -189,6 +189,10 @@ def move_around_perimeter(printer, pcb_width, pcb_height, z_height):
     # Run the Tkinter event loop
     root.mainloop()
 
+    # Ensure the printer returns to the starting position after the "Done" button is pressed
+    print("Returning to starting position...")
+    printer.move_probe(x=0, y=0, z=z_height, feedrate=800)
+
 def adjust_pcb_height(printer):
     """
     Adjust the PCB height and allow the user to set the Z position for probing.
@@ -280,6 +284,10 @@ def scan_field():
         # Move around the PCB perimeter for adjustment using the adjusted Z height
         move_around_perimeter(printer, PCB_SIZE_CM[0], PCB_SIZE_CM[1], z_height)
 
+        # Initialize the interactive plot
+        fig, ax, contour, colorbar = initialize_plot()
+
+        # Main scanning loop
         for i, (y, x) in enumerate(np.ndindex(len(y_values), len(x_values))):
             # Move the probe to the (x, y) position using the adjusted Z height
             print(f"Moving probe to X={x_values[x]:.3f}, Y={y_values[y]:.3f}, Z={z_height:.3f}")
@@ -293,10 +301,13 @@ def scan_field():
                     "y": float(y_values[y]),
                     "field_strength": float(field_strength)
                 })
+            else:
+                print(f"Warning: No field strength measured at X={x_values[x]:.3f}, Y={y_values[y]:.3f}")
 
             # Update the plot every 10 measurements
             if (i + 1) % 10 == 0:
                 contour = update_plot(ax, contour, colorbar, results, x_values, y_values)
+
     finally:
         # Ensure the printer is disconnected properly
         printer.disconnect()
