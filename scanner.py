@@ -31,11 +31,11 @@ from d3d_printer import PrinterConnection  # Import the PrinterConnection class
 
 # PCB-related constants
 PCB_SIZE_CM = (3, 2)  # PCB size in centimeters (width, height)
-RESOLUTION = 10  # Resolution in points per millimeter
-PCB_SIZE = (PCB_SIZE_CM[0] / 100, PCB_SIZE_CM[1] / 100)  # Convert PCB size to meters
+RESOLUTION = 50  # Resolution in points per centimeter
+PCB_SIZE = (PCB_SIZE_CM[0], PCB_SIZE_CM[1])  # PCB size already in centimeters
 
 # Generate scanning grid based on PCB size and resolution
-STEP_SIZE = PCB_SIZE[0] / (RESOLUTION * PCB_SIZE_CM[0])  # Step size in meters (scaled to PCB width)
+STEP_SIZE = 1 / RESOLUTION  # Step size in centimeters
 x_values = np.arange(0, PCB_SIZE[0] + STEP_SIZE, STEP_SIZE)
 y_values = np.arange(0, PCB_SIZE[1] + STEP_SIZE, STEP_SIZE)
 
@@ -55,7 +55,7 @@ WAVELENGTH = 3e8 / CENTER_FREQUENCY  # Speed of light divided by frequency
 SIMULATE_USRP = False     # Set to True to simulate the USRP
 
 # 3D printer configuration
-PRINTER_IP = "192.168.1.127"  # Replace with the actual IP of the 3D printer
+PRINTER_IP = "192.168.1.100"  # Replace with the actual IP of the 3D printer
 PRINTER_PORT = 23  # Default Telnet port for G-code communication
 SIMULATE_PRINTER = False  # Set to True to simulate the printer
 INIT_GCODE = "G28"  # Example initialization G-code command
@@ -147,6 +147,32 @@ def update_plot(ax, contour, colorbar, results, x_values, y_values):
 
     return contour  # Return the updated contour object
 
+def move_around_perimeter(printer, pcb_width, pcb_height):
+    """
+    Move the printer around the PCB perimeter to allow the user to adjust PCB placement.
+
+    :param printer: PrinterConnection object.
+    :param pcb_width: Width of the PCB in cm.
+    :param pcb_height: Height of the PCB in cm.
+    """
+    print("Moving around the PCB perimeter for adjustment...")
+    printer.move_probe(x=0, y=0, feedrate=800)  # Move to bottom-left corner
+    printer.move_probe(x=pcb_width * 10, y=0, feedrate=800)  # Move to bottom-right corner
+    printer.move_probe(x=pcb_width * 10, y=pcb_height * 10, feedrate=800)  # Move to top-right corner
+    printer.move_probe(x=0, y=pcb_height * 10, feedrate=800)  # Move to top-left corner
+    printer.move_probe(x=0, y=0, feedrate=800)  # Return to bottom-left corner
+
+    # Display a graphical popup for user adjustment
+    plt.figure(figsize=(6, 4))
+    plt.text(0.5, 0.5, "Adjust PCB placement\nthen press the button to continue", 
+             fontsize=14, ha='center', va='center')
+    plt.axis('off')
+    plt.show(block=False)
+
+    # Wait for user confirmation via a graphical button
+    input("Press Enter to continue after adjustment...")
+    plt.close()
+
 def scan_field():
     """Perform the scanning process and save results to a JSON file."""
     results = []
@@ -168,6 +194,8 @@ def scan_field():
         print("Failed to connect to the 3D printer. Exiting scan.")
         return
 
+
+
     # Initialize the interactive plot
     fig, ax, contour, colorbar = initialize_plot()
 
@@ -181,9 +209,9 @@ def scan_field():
             field_strength = measure_field_strength(usrp, streamer)
             if field_strength is not None:
                 results.append({
-                    "x": float(x_values[x]),  # Convert numpy.float32 to float
-                    "y": float(y_values[y]),  # Convert numpy.float32 to float
-                    "field_strength": float(field_strength)  # Convert numpy.float32 to float
+                    "x": float(x_values[x]),
+                    "y": float(y_values[y]),
+                    "field_strength": float(field_strength)
                 })
 
             # Update the plot every 10 measurements
@@ -194,18 +222,21 @@ def scan_field():
             # Initialize the printer (home axes and calibrate Z-axis)
             printer.initialize_printer()
 
+            # Move around the PCB perimeter for adjustment
+            move_around_perimeter(printer, PCB_SIZE_CM[0], PCB_SIZE_CM[1])
+
             for i, (y, x) in enumerate(np.ndindex(len(y_values), len(x_values))):
                 # Move the probe to the (x, y) position
                 print(f"Moving probe to X={x_values[x]:.3f}, Y={y_values[y]:.3f}")
-                printer.move_probe(x=x_values[x] * 100, y=y_values[y] * 100)  # Convert to cm
+                printer.move_probe(x=x_values[x] * 10, y=y_values[y] * 10)  # Convert to mm
 
                 # Measure the field strength
                 field_strength = measure_field_strength(usrp, streamer)
                 if field_strength is not None:
                     results.append({
-                        "x": float(x_values[x]),  # Convert numpy.float32 to float
-                        "y": float(y_values[y]),  # Convert numpy.float32 to float
-                        "field_strength": float(field_strength)  # Convert numpy.float32 to float
+                        "x": float(x_values[x]),
+                        "y": float(y_values[y]),
+                        "field_strength": float(field_strength)
                     })
 
                 # Update the plot every 10 measurements
@@ -229,15 +260,15 @@ def scan_field():
     ax.set_aspect('equal', adjustable='box')
 
     # Extract x, y, and field_strength values for final plot
-    x = np.array([point["x"] for point in results]) * 100  # Convert from meters to cm
-    y = np.array([point["y"] for point in results]) * 100  # Convert from meters to cm
+    x = np.array([point["x"] for point in results]) * 100
+    y = np.array([point["y"] for point in results]) * 100
     field_strength = np.array([point["field_strength"] for point in results])
 
     # Reshape data for plotting
-    unique_x = np.unique(x_values * 100)  # Convert x_values to cm
-    unique_y = np.unique(y_values * 100)  # Convert y_values to cm
+    unique_x = np.unique(x_values * 100)
+    unique_y = np.unique(y_values * 100)
     X, Y = np.meshgrid(unique_x, unique_y)
-    Z = np.full(X.shape, np.nan)  # Initialize with NaN for missing points
+    Z = np.full(X.shape, np.nan)
 
     for point in results:
         xi = np.where(unique_x == point["x"] * 100)[0][0]

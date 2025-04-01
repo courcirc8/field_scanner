@@ -17,7 +17,6 @@ Missing Features:
 """
 
 import socket
-import time
 
 class PrinterConnection:
     PASSWORD = "ercerc9"  # Define the password for the 3D printer
@@ -70,8 +69,8 @@ class PrinterConnection:
             self.send_gcode("G28")  # G28 is the G-code for homing all axes
 
             # Turn off the motors
-            #print("Turning off motors...")
-            #self.send_gcode("M81")  # M81 is the G-code to turn off motors
+            print("Turning off motors...")
+            self.send_gcode("M81")  # M81 is the G-code to turn off motors
 
             # Close the connection
             self.socket.close()
@@ -89,8 +88,8 @@ class PrinterConnection:
             print("Printer is not connected.")
             return None
         try:
-            self.socket.sendall((command + "\n").encode())  # Send the G-code command
-            response = self.socket.recv(1024).decode()  # Wait for the printer's response
+            self.socket.sendall((command + "\n").encode())
+            response = self.socket.recv(1024).decode()
             print(f"Sent: {command}, Received: {response.strip()}")
             return response.strip()
         except Exception as e:
@@ -146,7 +145,7 @@ class PrinterConnection:
 
 if __name__ == "__main__":
     # IP address and port configuration for standalone testing
-    PRINTER_IP = "192.168.1.100"  # Replace with the actual IP address of the 3D printer
+    PRINTER_IP = "192.168.1.127"  # Replace with the actual IP address of the 3D printer
     PRINTER_PORT = 23  # Default Telnet port for G-code communication
 
     # Create a PrinterConnection instance
