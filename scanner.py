@@ -36,6 +36,8 @@ PCB_SIZE_CM = (2.05, 1.4)  # PCB size in centimeters (width, height)
 
 RESOLUTION = 30  # Resolution in points per centimeter
 PCB_SIZE = (PCB_SIZE_CM[0], PCB_SIZE_CM[1])  # PCB size already in centimeters
+max_height_x_pos = 1.6  # X position of the highest component in cm
+max_height_y_pos = 1.1  # Y position of the highest component in cm
 
 # Generate scanning grid based on PCB size and resolution
 STEP_SIZE = 1 / RESOLUTION  # Step size in centimeters
@@ -152,64 +154,6 @@ def update_plot(ax, contour, colorbar, results, x_values, y_values):
 
     return contour  # Return the updated contour object
 
-def move_around_perimeter(printer, pcb_width, pcb_height, z_height):
-    """
-    Move the printer around the PCB perimeter to allow the user to adjust PCB placement.
-
-    :param printer: PrinterConnection object.
-    :param pcb_width: Width of the PCB in cm.
-    :param pcb_height: Height of the PCB in cm.
-    :param z_height: Adjusted Z height to use for movements.
-    """
-    import tkinter as tk
-    import queue
-
-    # Ensure the printer is in absolute positioning mode
-    printer.send_gcode("G90")  # Set absolute positioning
-
-    def stop_movement():
-        nonlocal done
-        done = True
-        root.quit()  # Safely exit the main loop
-
-    # Create the Tkinter window
-    root = tk.Tk()
-    root.title("Adjust PCB Placement")
-    root.geometry("200x100")
-    tk.Button(root, text="Done", command=stop_movement).pack(pady=20)
-
-    done = False
-    command_queue = queue.Queue()
-
-    def cycle_perimeter():
-        while not done:
-            command_queue.put((0, 0))  # Bottom-left corner
-            command_queue.put((pcb_width * 10, 0))  # Bottom-right corner
-            command_queue.put((pcb_width * 10, pcb_height * 10))  # Top-right corner
-            command_queue.put((0, pcb_height * 10))  # Top-left corner
-            command_queue.put((0, 0))  # Return to bottom-left corner
-
-    def process_commands():
-        if not command_queue.empty():
-            x, y = command_queue.get()
-            printer.move_probe(x=x, y=y, z=z_height, feedrate=800)
-        if not done:
-            root.after(100, process_commands)  # Schedule the next command processing
-
-    # Start the perimeter cycling in a separate thread
-    import threading
-    threading.Thread(target=cycle_perimeter, daemon=True).start()
-
-    # Start processing commands on the main thread
-    process_commands()
-
-    # Run the Tkinter event loop on the main thread
-    root.mainloop()
-
-    # Ensure the printer returns to the starting position after the "Done" button is pressed
-    print("Returning to starting position...")
-    printer.move_probe(x=0, y=0, z=z_height, feedrate=800)
-
 def adjust_pcb_height(printer, usrp, streamer):
     """
     Adjust the PCB height and allow the user to set the Z position for probing.
@@ -221,7 +165,6 @@ def adjust_pcb_height(printer, usrp, streamer):
     :return: Final Z height to be used for probing.
     """
     import tkinter as tk
-    import queue
     import threading
     import time
 
@@ -233,85 +176,89 @@ def adjust_pcb_height(printer, usrp, streamer):
 
     # Initialize the Z height
     z_height = 34  # Start at 3 cm
-    power_queue = queue.Queue()
+    z_lift = 1  # Lift height in mm
+    pcb_corners = {
+        "Upper Left": (0, PCB_SIZE_CM[1] * 10),
+        "Upper Right": (PCB_SIZE_CM[0] * 10, PCB_SIZE_CM[1] * 10),
+        "Bottom Left": (0, 0),
+        "Bottom Right": (PCB_SIZE_CM[0] * 10, 0),
+    }
 
-    # Create a popup window for user adjustment
+    def move_to_corner(corner, max_height=False):
+        """Move the probe to a specified corner."""
+        x, y = pcb_corners[corner]
+        printer.move_probe(x=x, y=y, z=z_height + z_lift, feedrate=3000)  # Move up and travel
+        if not max_height:
+            printer.move_probe(x=x, y=y, z=z_height - z_lift, feedrate=3000)  # Land near PCB
+
+    def move_to_max_height():
+        """Move the probe to the highest component position."""
+        x = max_height_x_pos * 10  # Convert to mm
+        y = max_height_y_pos * 10  # Convert to mm
+        printer.move_probe(x=x, y=y, z=z_height + z_lift, feedrate=3000)  # Move up and travel
+        printer.move_probe(x=x, y=y, z=z_height, feedrate=3000)  # Land at max Z
+
     def measure_power():
-        """Measure the radio power and update the queue."""
+        """Measure the radio power and update the label in a thread-safe way."""
         while not done:
             if SIMULATE_USRP:
                 power = np.random.uniform(-70, -50)  # Simulated power in dBm
             else:
                 power = measure_field_strength(usrp, streamer)
-            power_queue.put(power)
+            if not done:
+                root.after(0, lambda: power_label.config(text=f"Power: {power:.2f} dBm"))  # Thread-safe update
             time.sleep(1)  # Update every second
 
-    def update_power_label():
-        """Update the power label from the queue."""
-        if not power_queue.empty():
-            power = power_queue.get()
-            power_label.config(text=f"Power: {power:.2f} dBm")
-        if not done:
-            root.after(100, update_power_label)  # Schedule the next update
-
-    def move_up_1cm():
-        nonlocal z_height
-        z_height += 10
-        printer.move_probe(x=0, y=0, z=z_height, feedrate=3000)
-
-    def move_up_1mm():
-        nonlocal z_height
-        z_height += 1
-        printer.move_probe(x=0, y=0, z=z_height, feedrate=3000)
-
-    def move_down_1mm():
-        nonlocal z_height
-        z_height -= 1
-        printer.move_probe(x=0, y=0, z=z_height, feedrate=3000)
-
-    def move_down_1cm():
-        nonlocal z_height
-        z_height -= 10
-        printer.move_probe(x=0, y=0, z=z_height, feedrate=3000)
-
-    def move_up_0_1mm():
-        nonlocal z_height
-        z_height += 0.1
-        printer.move_probe(x=0, y=0, z=z_height, feedrate=3000)
-
-    def move_down_0_1mm():
-        nonlocal z_height
-        z_height -= 0.1
-        printer.move_probe(x=0, y=0, z=z_height, feedrate=3000)
-
     def done_callback():
+        """Return to the correct Z height and exit."""
         nonlocal done
-        done = True
+        done = True  # Stop the measure_power thread
+        printer.send_gcode(f"G1 Z{z_height:.3f} F3000")  # Return to the correct Z height
         root.quit()  # Safely exit the main loop
 
+    def adjust_z(delta):
+        """Adjust the Z height by a specified delta without moving X or Y."""
+        nonlocal z_height
+        z_height += delta
+        printer.send_gcode(f"G1 Z{z_height:.3f} F3000")  # Only adjust Z
+        z_label.config(text=f"Defined Z: {z_height:.2f} mm")  # Update the Z reference display
+
+    # Create the Tkinter window
     root = tk.Tk()
     root.title("Adjust PCB Height")
-    root.geometry("300x500")
+    root.geometry("500x400")
 
-    # Add buttons for adjustment
-    tk.Button(root, text="Move up by 1 cm", command=move_up_1cm).pack(pady=10)
-    tk.Button(root, text="Move up by 1 mm", command=move_up_1mm).pack(pady=10)
-    tk.Button(root, text="Move up by 0.1 mm", command=move_up_0_1mm).pack(pady=10)
-    tk.Button(root, text="Move down by 0.1 mm", command=move_down_0_1mm).pack(pady=10)
-    tk.Button(root, text="Move down by 1 mm", command=move_down_1mm).pack(pady=10)
-    tk.Button(root, text="Move down by 1 cm", command=move_down_1cm).pack(pady=10)
-    tk.Button(root, text="Done", command=done_callback).pack(pady=10)
+    # Add corner buttons
+    tk.Button(root, text="Upper Left", command=lambda: move_to_corner("Upper Left")).place(x=50, y=50)
+    tk.Button(root, text="Upper Right", command=lambda: move_to_corner("Upper Right")).place(x=250, y=50)
+    tk.Button(root, text="Bottom Left", command=lambda: move_to_corner("Bottom Left")).place(x=50, y=250)
+    tk.Button(root, text="Bottom Right", command=lambda: move_to_corner("Bottom Right")).place(x=250, y=250)
+
+    # Add "Max Height" button
+    tk.Button(root, text="Max Height", command=move_to_max_height).place(x=150, y=150)
+
+    # Add Z adjustment buttons on the right
+    tk.Button(root, text="+1 cm", command=lambda: adjust_z(10)).place(x=400, y=50)
+    tk.Button(root, text="+1 mm", command=lambda: adjust_z(1)).place(x=400, y=100)
+    tk.Button(root, text="+0.1 mm", command=lambda: adjust_z(0.1)).place(x=400, y=150)
+    tk.Button(root, text="-0.1 mm", command=lambda: adjust_z(-0.1)).place(x=400, y=200)
+    tk.Button(root, text="-1 mm", command=lambda: adjust_z(-1)).place(x=400, y=250)
+    tk.Button(root, text="-1 cm", command=lambda: adjust_z(-10)).place(x=400, y=300)
+
+    # Add "Done" button
+    tk.Button(root, text="Done", command=done_callback).place(x=150, y=300)
 
     # Add a label to display the measured power
     power_label = tk.Label(root, text="Power: -- dBm", font=("Helvetica", 14))
-    power_label.pack(pady=20)
+    power_label.place(x=100, y=350)
+
+    # Add a label to display the defined Z reference
+    z_label = tk.Label(root, text=f"Defined Z: {z_height:.2f} mm", font=("Helvetica", 14))
+    z_label.place(x=100, y=20)
 
     # Start a thread for real-time power updates
     done = False
     threading.Thread(target=measure_power, daemon=True).start()
-
-    # Start updating the power label on the main thread
-    update_power_label()
 
     # Run the Tkinter event loop
     root.mainloop()
@@ -347,10 +294,7 @@ def scan_field():
         # Adjust PCB height and get the final Z height
         z_height = adjust_pcb_height(printer, usrp, streamer)
 
-        # Move around the PCB perimeter for adjustment using the adjusted Z height
-        move_around_perimeter(printer, PCB_SIZE_CM[0], PCB_SIZE_CM[1], z_height)
-
-        # Add a delay after the perimeter movement to ensure the printer is ready
+        # Add a delay after the adjustment to ensure the printer is ready
         # time.sleep(2)  # Adjust the delay as needed
 
         # Initialize the interactive plot
