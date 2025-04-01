@@ -31,7 +31,7 @@ from d3d_printer import PrinterConnection  # Import the PrinterConnection class
 
 # PCB-related constants
 PCB_SIZE_CM = (3, 2)  # PCB size in centimeters (width, height)
-RESOLUTION = 50  # Resolution in points per centimeter
+RESOLUTION = 20  # Resolution in points per centimeter
 PCB_SIZE = (PCB_SIZE_CM[0], PCB_SIZE_CM[1])  # PCB size already in centimeters
 
 # Generate scanning grid based on PCB size and resolution
@@ -58,7 +58,6 @@ SIMULATE_USRP = False     # Set to True to simulate the USRP
 PRINTER_IP = "192.168.1.100"  # Replace with the actual IP of the 3D printer
 PRINTER_PORT = 23  # Default Telnet port for G-code communication
 SIMULATE_PRINTER = False  # Set to True to simulate the printer
-INIT_GCODE = "G28"  # Example initialization G-code command
 
 # Output configuration
 OUTPUT_FILE = "scan_results.json"
@@ -147,31 +146,108 @@ def update_plot(ax, contour, colorbar, results, x_values, y_values):
 
     return contour  # Return the updated contour object
 
-def move_around_perimeter(printer, pcb_width, pcb_height):
+def move_around_perimeter(printer, pcb_width, pcb_height, z_height):
     """
     Move the printer around the PCB perimeter to allow the user to adjust PCB placement.
 
     :param printer: PrinterConnection object.
     :param pcb_width: Width of the PCB in cm.
     :param pcb_height: Height of the PCB in cm.
+    :param z_height: Adjusted Z height to use for movements.
     """
-    print("Moving around the PCB perimeter for adjustment...")
-    printer.move_probe(x=0, y=0, feedrate=800)  # Move to bottom-left corner
-    printer.move_probe(x=pcb_width * 10, y=0, feedrate=800)  # Move to bottom-right corner
-    printer.move_probe(x=pcb_width * 10, y=pcb_height * 10, feedrate=800)  # Move to top-right corner
-    printer.move_probe(x=0, y=pcb_height * 10, feedrate=800)  # Move to top-left corner
-    printer.move_probe(x=0, y=0, feedrate=800)  # Return to bottom-left corner
+    import tkinter as tk
 
-    # Display a graphical popup for user adjustment
-    plt.figure(figsize=(6, 4))
-    plt.text(0.5, 0.5, "Adjust PCB placement\nthen press the button to continue", 
-             fontsize=14, ha='center', va='center')
-    plt.axis('off')
-    plt.show(block=False)
+    # Ensure the printer is in absolute positioning mode
+    printer.send_gcode("G90")  # Set absolute positioning
 
-    # Wait for user confirmation via a graphical button
-    input("Press Enter to continue after adjustment...")
-    plt.close()
+    def stop_movement():
+        nonlocal done
+        done = True
+        root.destroy()
+
+    # Create the Tkinter window
+    root = tk.Tk()
+    root.title("Adjust PCB Placement")
+    root.geometry("200x100")
+    tk.Button(root, text="Done", command=stop_movement).pack(pady=20)
+
+    done = False
+    print("Cycling around the PCB perimeter for adjustment...")
+
+    def cycle_perimeter():
+        while not done:
+            printer.move_probe(x=0, y=0, z=z_height, feedrate=800)  # Bottom-left corner
+            printer.move_probe(x=pcb_width * 10, y=0, z=z_height, feedrate=800)  # Bottom-right corner
+            printer.move_probe(x=pcb_width * 10, y=pcb_height * 10, z=z_height, feedrate=800)  # Top-right corner
+            printer.move_probe(x=0, y=pcb_height * 10, z=z_height, feedrate=800)  # Top-left corner
+            printer.move_probe(x=0, y=0, z=z_height, feedrate=800)  # Return to bottom-left corner
+
+    # Run the perimeter cycling in a separate thread
+    import threading
+    threading.Thread(target=cycle_perimeter, daemon=True).start()
+
+    # Run the Tkinter event loop
+    root.mainloop()
+
+def adjust_pcb_height(printer):
+    """
+    Adjust the PCB height and allow the user to set the Z position for probing.
+
+    :param printer: PrinterConnection object.
+    :return: Final Z height to be used for probing.
+    """
+    # Ensure the printer is in absolute positioning mode
+    printer.send_gcode("G90")  # Set absolute positioning
+
+    # Move the printer head up by 3 cm at feedrate 3000
+    printer.move_probe(x=0, y=0, z=30, feedrate=3000)
+
+    # Initialize the Z height
+    z_height = 30  # Start at 3 cm
+
+    # Create a popup window for user adjustment
+    import tkinter as tk
+
+    def move_up_1cm():
+        nonlocal z_height
+        z_height += 10
+        printer.move_probe(x=0, y=0, z=z_height, feedrate=3000)
+
+    def move_up_1mm():
+        nonlocal z_height
+        z_height += 1
+        printer.move_probe(x=0, y=0, z=z_height, feedrate=3000)
+
+    def move_down_1mm():
+        nonlocal z_height
+        z_height -= 1
+        printer.move_probe(x=0, y=0, z=z_height, feedrate=3000)
+
+    def move_down_1cm():
+        nonlocal z_height
+        z_height -= 10
+        printer.move_probe(x=0, y=0, z=z_height, feedrate=3000)
+
+    def done():
+        root.destroy()
+
+    # Create the Tkinter window
+    root = tk.Tk()
+    root.title("Adjust PCB Height")
+    root.geometry("200x300")
+
+    # Add buttons for adjustment
+    tk.Button(root, text="Move up by 1 cm", command=move_up_1cm).pack(pady=10)
+    tk.Button(root, text="Move up by 1 mm", command=move_up_1mm).pack(pady=10)
+    tk.Button(root, text="Done", command=done).pack(pady=10)
+    tk.Button(root, text="Move down by 1 mm", command=move_down_1mm).pack(pady=10)
+    tk.Button(root, text="Move down by 1 cm", command=move_down_1cm).pack(pady=10)
+
+    # Run the Tkinter event loop
+    root.mainloop()
+
+    # Return the final Z height
+    return z_height
 
 def scan_field():
     """Perform the scanning process and save results to a JSON file."""
@@ -191,20 +267,24 @@ def scan_field():
 
     # Terminate if the printer connection fails
     if not printer.socket:
-        print("Failed to connect to the 3D printer. Exiting scan.")
+        print("Failed to connect to the 3D printer. Possible authentication issue. Exiting scan.")
         return
 
+    try:
+        # Initialize the printer (home axes and calibrate Z-axis)
+        printer.initialize_printer()
 
+        # Adjust PCB height and get the final Z height
+        z_height = adjust_pcb_height(printer)
 
-    # Initialize the interactive plot
-    fig, ax, contour, colorbar = initialize_plot()
+        # Move around the PCB perimeter for adjustment using the adjusted Z height
+        move_around_perimeter(printer, PCB_SIZE_CM[0], PCB_SIZE_CM[1], z_height)
 
-    if SIMULATE_PRINTER:
-        print("Printer simulation mode enabled. No printer connection will be made.")
         for i, (y, x) in enumerate(np.ndindex(len(y_values), len(x_values))):
-            # Simulate moving the probe to the (x, y) position
-            print(f"Simulating move to X={x_values[x]:.3f}, Y={y_values[y]:.3f}")
-            
+            # Move the probe to the (x, y) position using the adjusted Z height
+            print(f"Moving probe to X={x_values[x]:.3f}, Y={y_values[y]:.3f}, Z={z_height:.3f}")
+            printer.move_probe(x=x_values[x] * 10, y=y_values[y] * 10, z=z_height)  # Convert to mm
+
             # Measure the field strength
             field_strength = measure_field_strength(usrp, streamer)
             if field_strength is not None:
@@ -217,35 +297,10 @@ def scan_field():
             # Update the plot every 10 measurements
             if (i + 1) % 10 == 0:
                 contour = update_plot(ax, contour, colorbar, results, x_values, y_values)
-    else:
-        try:
-            # Initialize the printer (home axes and calibrate Z-axis)
-            printer.initialize_printer()
+    finally:
+        # Ensure the printer is disconnected properly
+        printer.disconnect()
 
-            # Move around the PCB perimeter for adjustment
-            move_around_perimeter(printer, PCB_SIZE_CM[0], PCB_SIZE_CM[1])
-
-            for i, (y, x) in enumerate(np.ndindex(len(y_values), len(x_values))):
-                # Move the probe to the (x, y) position
-                print(f"Moving probe to X={x_values[x]:.3f}, Y={y_values[y]:.3f}")
-                printer.move_probe(x=x_values[x] * 10, y=y_values[y] * 10)  # Convert to mm
-
-                # Measure the field strength
-                field_strength = measure_field_strength(usrp, streamer)
-                if field_strength is not None:
-                    results.append({
-                        "x": float(x_values[x]),
-                        "y": float(y_values[y]),
-                        "field_strength": float(field_strength)
-                    })
-
-                # Update the plot every 10 measurements
-                if (i + 1) % 10 == 0:
-                    contour = update_plot(ax, contour, colorbar, results, x_values, y_values)
-        finally:
-            # Ensure the printer is disconnected properly
-            printer.disconnect()
-    
     # Save results to a JSON file
     with open(OUTPUT_FILE, "w") as f:
         json.dump(results, f, indent=4)
