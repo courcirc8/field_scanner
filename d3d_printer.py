@@ -20,23 +20,36 @@ import socket
 import time
 
 class PrinterConnection:
-    PASSWORD = "ercerc9"  # Define the password for the 3D printer
     FAST_Z_MOVE = 10  # Fast Z move height in mm
     NOZZLE_HEIGHT = 3  # Nozzle height in mm for calibration
 
-    def __init__(self, ip, port=23):
+    def __init__(self, ip, port=23, password_file="password.txt"):
         """
         Initialize the PrinterConnection object.
 
         :param ip: IP address of the 3D printer.
         :param port: Port for Telnet communication (default: 23).
+        :param password_file: Path to the file containing the printer password.
         """
         self.ip = ip
         self.port = port
         self.socket = None
+        self.password = self._load_password(password_file)
+
+    def _load_password(self, password_file):
+        """Load the password from a file."""
+        try:
+            with open(password_file, "r") as file:
+                return file.read().strip()
+        except Exception as e:
+            print(f"Error loading password from {password_file}: {e}")
+            return None
 
     def connect(self):
         """Establish a Telnet connection to the 3D printer and send the password."""
+        if not self.password:
+            print("Password not loaded. Cannot connect to the printer.")
+            return
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.connect((self.ip, self.port))
@@ -48,16 +61,16 @@ class PrinterConnection:
 
             if "Please enter your password:" in response:
                 # Send the password
-                self.socket.sendall((self.PASSWORD + "\n").encode())
+                self.socket.sendall((self.password + "\n").encode())
                 response = self.socket.recv(1024).decode()
                 print(f"Sent password, Received: {response.strip()}")
 
-                if "ok" in response.lower():
-                    print("Password accepted.")
+                if "log in successful" in response.lower() or "ok" in response.lower():
+                    print("Password accepted. Connection established.")
                 else:
-                    print("Failed to authenticate with the printer. Check the password.")
+                    raise ValueError("Failed to authenticate with the printer. Check the password.")
             else:
-                print("Unexpected response from the printer. Authentication failed.")
+                raise ValueError("Unexpected response from the printer. Authentication failed.")
         except Exception as e:
             print(f"Failed to connect to 3D printer: {e}")
             self.socket = None
@@ -65,18 +78,21 @@ class PrinterConnection:
     def disconnect(self):
         """Close the Telnet connection to the 3D printer."""
         if self.socket:
-            # Home all axes before disconnecting
-            print("Homing all axes before disconnecting...")
-            self.send_gcode("G28")  # G28 is the G-code for homing all axes
+            try:
+                # Optional: Home all axes before disconnecting
+                print("Homing all axes before disconnecting...")
+                self.send_gcode("G28")  # G28 is the G-code for homing all axes
 
-            # Turn off the motors
-            #print("Turning off motors...")
-            #self.send_gcode("M81")  # M81 is the G-code to turn off motors
-
-            # Close the connection
-            self.socket.close()
-            print("Disconnected from 3D printer.")
-            self.socket = None
+                # Turn off the motors
+                print("Turning off motors...")
+                self.send_gcode("M84")  # M84 is the G-code to disable motors
+            except Exception as e:
+                print(f"Error during disconnect: {e}")
+            finally:
+                # Close the connection
+                self.socket.close()
+                print("Disconnected from 3D printer.")
+                self.socket = None
 
     def send_gcode(self, command):
         """
@@ -117,12 +133,12 @@ class PrinterConnection:
             print(f"Axes homed: {response_g28}")
         
         # Fast move close to the bottom
-        response_fast_z = self.send_gcode(f"G1 X0 Y0 Z{self.FAST_Z_MOVE} F3000")
+        response_fast_z = self.send_gcode(f"G1 Z{self.FAST_Z_MOVE} F3000")
         if response_fast_z:
             print(f"Fast Z move response: {response_fast_z}")
         
         # Calibrate Z-axis using magnetic probe
-        response_g30 = self.send_gcode(f"G30 Z{self.NOZZLE_HEIGHT}")
+        response_g30 = self.send_gcode("G30")  # Removed Z parameter for compatibility
         if response_g30:
             print(f"Z-axis calibration response: {response_g30}")
         
