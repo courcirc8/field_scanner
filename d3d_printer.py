@@ -20,7 +20,7 @@ import socket
 import time
 
 class PrinterConnection:
-    FAST_Z_MOVE = 10  # Fast Z move height in mm
+    FAST_Z_MOVE = 34  # Fast Z move height in mm
     NOZZLE_HEIGHT = 3  # Nozzle height in mm for calibration
 
     def __init__(self, ip, port=23, password_file="password.txt"):
@@ -138,27 +138,34 @@ class PrinterConnection:
             print(f"Fast Z move response: {response_fast_z}")
         
         # Calibrate Z-axis using magnetic probe
-        response_g30 = self.send_gcode("G30")  # Removed Z parameter for compatibility
-        if response_g30:
-            print(f"Z-axis calibration response: {response_g30}")
+        #response_g30 = self.send_gcode("G30")  # Removed Z parameter for compatibility
+        #if response_g30:
+        #    print(f"Z-axis calibration response: {response_g30}")
         
-        return response_g30
+        return response_fast_z
 
     def move_probe(self, x, y, z=None, feedrate=3000):
         """
-        Move the probe to a specific (X, Y, Z) position.
+        Move the probe to a specific (X, Y, Z) position and wait for the movement to complete.
 
         :param x: X-coordinate in mm.
         :param y: Y-coordinate in mm.
         :param z: Z-coordinate in mm (optional).
         :param feedrate: Movement speed in mm/min (default: 3000).
-        :return: Response from the printer.
+        :return: Response from the printer after ensuring the movement is complete.
         """
         gcode_command = f"G1 X{x:.3f} Y{y:.3f}"
         if z is not None:
             gcode_command += f" Z{z:.3f}"
         gcode_command += f" F{feedrate}"
-        return self.send_gcode(gcode_command)
+        
+        # Send the movement command
+        response = self.send_gcode(gcode_command)
+        
+        # Ensure the movement is complete
+        self.send_gcode("M400")  # Wait for all movements to finish
+        
+        return response
 
 if __name__ == "__main__":
     # IP address and port configuration for standalone testing

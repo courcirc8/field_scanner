@@ -58,16 +58,15 @@ def initialize_radio(freq, gain, rx_bw):
         print(f"Error initializing USRP: {e}")
         return None, None
 
-def receive_frame(streamer, gain):
+def receive_frame(streamer):
     """
-    Receive a frame of samples and estimate the input power.
-    
+    Receive a frame of samples.
+
     Args:
         streamer: The RX streamer object.
-        gain (float): Receiver gain in dB.
-    
+
     Returns:
-        float: Estimated input power in dBm.
+        numpy.ndarray: Received frame as a numpy array.
     """
     try:
         # Prepare receive buffer
@@ -82,23 +81,14 @@ def receive_frame(streamer, gain):
         # Receive samples
         streamer.recv(recv_buffer, metadata, timeout=1.0)
         if metadata.error_code != uhd.types.RXMetadataErrorCode.none:
-            print(f"Metadata error: {metadata.error_code}")
             return None
-        else:
-            print("Received samples successfully.")
 
         # Stop the stream
         stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont)
         streamer.issue_stream_cmd(stream_cmd)
 
-        # Estimate power
-        power_linear = np.mean(np.abs(recv_buffer[0])**2)  # Calculate power in linear scale
-        power_dbm = 10 * np.log10(power_linear + 1e-12) + 30  # Convert to dBm
-        input_power_dbm = power_dbm - gain  # Subtract receiver gain
-        print(f"Estimated input power: {input_power_dbm:.2f} dBm (input)")
-        return input_power_dbm
-    except Exception as e:
-        print(f"Error receiving frame: {e}")
+        return recv_buffer[0]
+    except Exception:
         return None
 
 def get_power_dBm(streamer, gain, nb_avera=10):
@@ -116,17 +106,18 @@ def get_power_dBm(streamer, gain, nb_avera=10):
     linear_powers = []
 
     for _ in range(nb_avera):
-        power = receive_frame(streamer, gain)
-        if power is not None:
-            linear_power = 10 ** ((power + gain - 30) / 10)  # Convert dBm to linear scale
-            linear_powers.append(linear_power)
+        frame = receive_frame(streamer)
+        if frame is not None:
+            power_linear = np.mean(np.abs(frame) ** 2)  # Calculate power in linear scale
+            linear_powers.append(power_linear)
         else:
             print("Failed to measure power.")
             return None
 
     if linear_powers:
         avg_linear_power = np.mean(linear_powers)
-        avg_power_dbm = 10 * np.log10(avg_linear_power) + 30 - gain
+        avg_power_dbm = 10 * np.log10(avg_linear_power + 1e-12) + 30 - gain
+        print(f"Measured power: {avg_power_dbm:.2f} dBm (averaged over {nb_avera} frames)")
         return avg_power_dbm
     else:
         return None

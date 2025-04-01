@@ -28,10 +28,13 @@ import matplotlib.pyplot as plt
 from measure_power import initialize_radio, receive_frame, get_power_dBm  # Import the updated functions
 from plot_field import plot_field  # Import the plotting function
 from d3d_printer import PrinterConnection  # Import the PrinterConnection class
+import time
 
 # PCB-related constants
-PCB_SIZE_CM = (3, 2)  # PCB size in centimeters (width, height)
-RESOLUTION = 20  # Resolution in points per centimeter
+PCB_SIZE_CM = (2.05, 1.4)  # PCB size in centimeters (width, height)
+#PCB_SIZE_CM = (1.4, 1.4)  # PCB size in centimeters (width, height)
+
+RESOLUTION = 30  # Resolution in points per centimeter
 PCB_SIZE = (PCB_SIZE_CM[0], PCB_SIZE_CM[1])  # PCB size already in centimeters
 
 # Generate scanning grid based on PCB size and resolution
@@ -112,11 +115,12 @@ def initialize_plot():
 
 def update_plot(ax, contour, colorbar, results, x_values, y_values):
     """Update the plot with new data."""
+    # Extract x, y, and field_strength values
     x = np.array([point["x"] for point in results]) * 100  # Convert from meters to cm
     y = np.array([point["y"] for point in results]) * 100  # Convert from meters to cm
     field_strength = np.array([point["field_strength"] for point in results])
 
-    # Reshape data for plotting
+    # Ensure unique_x and unique_y are consistent with the grid
     unique_x = np.unique(x_values * 100)  # Convert x_values to cm
     unique_y = np.unique(y_values * 100)  # Convert y_values to cm
     X, Y = np.meshgrid(unique_x, unique_y)
@@ -124,9 +128,10 @@ def update_plot(ax, contour, colorbar, results, x_values, y_values):
 
     # Fill in the measured points
     for point in results:
-        xi = np.where(unique_x == point["x"] * 100)[0][0]
-        yi = np.where(unique_y == point["y"] * 100)[0][0]
-        Z[yi, xi] = point["field_strength"]
+        xi = np.where(unique_x == point["x"] * 100)[0]
+        yi = np.where(unique_y == point["y"] * 100)[0]
+        if xi.size > 0 and yi.size > 0:  # Ensure indices are valid
+            Z[yi[0], xi[0]] = point["field_strength"]
 
     # Remove the old contour plot
     for artist in ax.collections:
@@ -139,8 +144,8 @@ def update_plot(ax, contour, colorbar, results, x_values, y_values):
     colorbar.update_normal(contour)  # Update the colorbar with the new contour
 
     # Update axis labels and title
-    ax.set_xlabel("X (cm)")
-    ax.set_ylabel("Y (cm)")
+    ax.set_xlabel("X (cm)")  # Ensure the label reflects centimeters
+    ax.set_ylabel("Y (cm)")  # Ensure the label reflects centimeters
     ax.set_title("EM Field Strength (Interactive)")
     ax.set_aspect('equal', adjustable='box')
     plt.pause(0.1)  # Pause to update the plot
@@ -224,10 +229,10 @@ def adjust_pcb_height(printer, usrp, streamer):
     printer.send_gcode("G90")  # Set absolute positioning
 
     # Move the printer head up by 3 cm at feedrate 3000
-    printer.move_probe(x=0, y=0, z=30, feedrate=3000)
+    printer.move_probe(x=0, y=0, z=34, feedrate=3000)  # This ensures Z is set initially
 
     # Initialize the Z height
-    z_height = 30  # Start at 3 cm
+    z_height = 34  # Start at 3 cm
     power_queue = queue.Queue()
 
     # Create a popup window for user adjustment
@@ -269,6 +274,16 @@ def adjust_pcb_height(printer, usrp, streamer):
         z_height -= 10
         printer.move_probe(x=0, y=0, z=z_height, feedrate=3000)
 
+    def move_up_0_1mm():
+        nonlocal z_height
+        z_height += 0.1
+        printer.move_probe(x=0, y=0, z=z_height, feedrate=3000)
+
+    def move_down_0_1mm():
+        nonlocal z_height
+        z_height -= 0.1
+        printer.move_probe(x=0, y=0, z=z_height, feedrate=3000)
+
     def done_callback():
         nonlocal done
         done = True
@@ -276,11 +291,13 @@ def adjust_pcb_height(printer, usrp, streamer):
 
     root = tk.Tk()
     root.title("Adjust PCB Height")
-    root.geometry("300x400")
+    root.geometry("300x500")
 
     # Add buttons for adjustment
     tk.Button(root, text="Move up by 1 cm", command=move_up_1cm).pack(pady=10)
     tk.Button(root, text="Move up by 1 mm", command=move_up_1mm).pack(pady=10)
+    tk.Button(root, text="Move up by 0.1 mm", command=move_up_0_1mm).pack(pady=10)
+    tk.Button(root, text="Move down by 0.1 mm", command=move_down_0_1mm).pack(pady=10)
     tk.Button(root, text="Move down by 1 mm", command=move_down_1mm).pack(pady=10)
     tk.Button(root, text="Move down by 1 cm", command=move_down_1cm).pack(pady=10)
     tk.Button(root, text="Done", command=done_callback).pack(pady=10)
@@ -333,29 +350,40 @@ def scan_field():
         # Move around the PCB perimeter for adjustment using the adjusted Z height
         move_around_perimeter(printer, PCB_SIZE_CM[0], PCB_SIZE_CM[1], z_height)
 
+        # Add a delay after the perimeter movement to ensure the printer is ready
+        # time.sleep(2)  # Adjust the delay as needed
+
         # Initialize the interactive plot
         fig, ax, contour, colorbar = initialize_plot()
 
         # Main scanning loop
-        for i, (y, x) in enumerate(np.ndindex(len(y_values), len(x_values))):
-            # Move the probe to the (x, y) position using the adjusted Z height
-            print(f"Moving probe to X={x_values[x]:.3f}, Y={y_values[y]:.3f}, Z={z_height:.3f}")
-            printer.move_probe(x=x_values[x] * 10, y=y_values[y] * 10, z=z_height)  # Convert to mm
+        for y_idx, y in enumerate(y_values):
+            # Add a delay at the beginning of each new line
+            # time.sleep(0.5)
 
-            # Measure the field strength
-            field_strength = measure_field_strength(usrp, streamer)
-            if field_strength is not None:
-                results.append({
-                    "x": float(x_values[x]),
-                    "y": float(y_values[y]),
-                    "field_strength": float(field_strength)
-                })
-            else:
-                print(f"Warning: No field strength measured at X={x_values[x]:.3f}, Y={y_values[y]:.3f}")
+            for x_idx, x in enumerate(x_values):
+                # Move the probe to the (x, y) position using the adjusted Z height
+                print(f"Moving probe to X={x:.3f}, Y={y:.3f}, Z={z_height:.3f}")
+                printer.move_probe(x=x * 10, y=y * 10, z=z_height)  # Convert to mm
 
-            # Update the plot every 10 measurements
-            if (i + 1) % 10 == 0:
-                contour = update_plot(ax, contour, colorbar, results, x_values, y_values)
+                # Measure the field strength using the averaged get_power_dBm with specified averages
+                try:
+                    field_strength = get_power_dBm(streamer, RX_GAIN, nb_avera)
+                except Exception as e:
+                    print(f"Error measuring field strength: {e}")
+                    field_strength = None
+
+                if field_strength is not None:
+                    results.append({
+                        "x": float(x),
+                        "y": float(y),
+                        "field_strength": float(field_strength)
+                    })
+                else:
+                    print(f"Warning: No field strength measured at X={x:.3f}, Y={y:.3f}")
+
+            # Update the plot after completing each X line
+            contour = update_plot(ax, contour, colorbar, results, x_values, y_values)
 
     finally:
         # Ensure the printer is disconnected properly
