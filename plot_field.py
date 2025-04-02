@@ -21,7 +21,7 @@ Missing Features:
 import json
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider
+from matplotlib.widgets import Slider, Button  # Import Slider and Button widgets
 from PIL import Image  # Import for image rotation
 from scipy.interpolate import griddata  # Import for interpolation
 
@@ -107,6 +107,15 @@ def plot_field():
             fig.canvas.draw_idle()
 
         slider.on_changed(update)
+
+        # Add a "Done" button to close the plot
+        ax_button = plt.axes([0.85, 0.02, 0.1, 0.05])  # Button at the bottom right
+        button = Button(ax_button, "Done", color="lightgray", hovercolor="gray")
+
+        def close_plot(event):
+            plt.close(fig)  # Close the plot when the button is clicked
+
+        button.on_clicked(close_plot)
 
         # Show the plot and block until the window is closed
         plt.show()
