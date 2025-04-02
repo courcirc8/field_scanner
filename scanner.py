@@ -29,9 +29,11 @@ from measure_power import initialize_radio, receive_frame, get_power_dBm  # Impo
 from plot_field import plot_field  # Import the plotting function
 from d3d_printer import PrinterConnection  # Import the PrinterConnection class
 import time
+import tkinter as tk
+from tkinter import simpledialog
 
 # PCB-related constants
-PCB_SIZE_CM = (2.12, 1.5)  # PCB size in centimeters (width, height)
+PCB_SIZE_CM = (2.2, 1.5)  # PCB size in centimeters (width, height)
 #PCB_SIZE_CM = (1.4, 1.4)  # PCB size in centimeters (width, height)
 
 RESOLUTION = 30  # Resolution in points per centimeter
@@ -70,9 +72,9 @@ PRINTER_PORT = 23  # Default Telnet port for G-code communication
 SIMULATE_PRINTER = False  # Set to True to simulate the printer
 
 # Output configuration
-OUTPUT_FILE = "scan_v1a_470ohms.json"
+OUTPUT_FILE = "scan_v1a_470ohms_m60d.json"
 DEBUG_MESSAGE = True  # Set to True to enable debug messages
-PCB_IMAGE_PATH = "./pcb.jpg"  # Path to the PCB image
+PCB_IMAGE_PATH = "./pcb_die.jpg"  # Path to the PCB image
 
 # Simulated EM field data (for demonstration purposes)
 def simulate_em_field(x, y):
@@ -159,15 +161,15 @@ def update_plot(ax, contour, colorbar, results, x_values, y_values):
 
     return contour  # Return the updated contour object
 
-def adjust_pcb_height(printer, usrp, streamer):
+def adjust_head(printer, usrp, streamer):
     """
-    Adjust the PCB height and allow the user to set the Z position for probing.
+    Adjust the printer head position (X, Y, Z) and allow the user to set the offsets for probing.
     Includes real-time radio power measurement and display.
 
     :param printer: PrinterConnection object.
     :param usrp: USRP object for power measurement.
     :param streamer: Streamer object for power measurement.
-    :return: Final Z height to be used for probing.
+    :return: Final X, Y, Z offsets to be used for probing.
     """
     import tkinter as tk
     import threading
@@ -176,10 +178,9 @@ def adjust_pcb_height(printer, usrp, streamer):
     # Ensure the printer is in absolute positioning mode
     printer.send_gcode("G90")  # Set absolute positioning
 
-    # Move the printer head up by the initial Z height
-    printer.move_probe(x=0, y=0, z=INITIAL_Z_HEIGHT, feedrate=3000)  # This ensures Z is set initially
-
-    # Initialize the Z height
+    # Initialize the offsets
+    x_offset = 0.0  # X-axis offset in mm
+    y_offset = 0.0  # Y-axis offset in mm
     z_height = INITIAL_Z_HEIGHT  # Start at the initial probing height
     z_lift = Z_LIFT  # Use the defined lift height
     pcb_corners = {
@@ -194,8 +195,8 @@ def adjust_pcb_height(printer, usrp, streamer):
         x, y = pcb_corners[corner]
         # Lift the probe to a safe height before moving in X-Y
         printer.move_probe(x=0, y=0, z=z_height + z_lift, feedrate=3000)  # Lift Z first
-        printer.move_probe(x=x, y=y, z=z_height + z_lift, feedrate=3000)  # Travel to the corner
-        printer.move_probe(x=x, y=y, z=z_height - z_lift, feedrate=3000)  # Lower Z to probing height
+        printer.move_probe(x=x + x_offset, y=y + y_offset, z=z_height + z_lift, feedrate=3000)  # Travel to the corner
+        printer.move_probe(x=x + x_offset, y=y + y_offset, z=z_height - z_lift, feedrate=3000)  # Lower Z to probing height
 
     def move_to_max_height():
         """Move the probe to the highest component position."""
@@ -203,8 +204,8 @@ def adjust_pcb_height(printer, usrp, streamer):
         y = max_height_y_pos * 10  # Convert to mm
         # Lift the probe to a safe height before moving in X-Y
         printer.move_probe(x=0, y=0, z=z_height + z_lift, feedrate=3000)  # Lift Z first
-        printer.move_probe(x=x, y=y, z=z_height + z_lift, feedrate=3000)  # Travel to the max height position
-        printer.move_probe(x=x, y=y, z=z_height, feedrate=3000)  # Land at max Z
+        printer.move_probe(x=x + x_offset, y=y + y_offset, z=z_height + z_lift, feedrate=3000)  # Travel to the max height position
+        printer.move_probe(x=x + x_offset, y=y + y_offset, z=z_height, feedrate=3000)  # Land at max Z
 
     def measure_power():
         """Measure the radio power and update the label in a thread-safe way."""
@@ -239,10 +240,24 @@ def adjust_pcb_height(printer, usrp, streamer):
         printer.send_gcode(f"G1 Z{z_height:.3f} F3000")  # Only adjust Z
         z_label.config(text=f"Defined Z: {z_height:.2f} mm")  # Update the Z reference display
 
+    def adjust_x(delta):
+        """Adjust the X offset."""
+        nonlocal x_offset
+        x_offset += delta
+        printer.send_gcode(f"G1 X{x_offset:.3f} F3000")  # Move X axis
+        x_label.config(text=f"X Offset: {x_offset:.2f} mm")  # Update the X offset display
+
+    def adjust_y(delta):
+        """Adjust the Y offset."""
+        nonlocal y_offset
+        y_offset += delta
+        printer.send_gcode(f"G1 Y{y_offset:.3f} F3000")  # Move Y axis
+        y_label.config(text=f"Y Offset: {y_offset:.2f} mm")  # Update the Y offset display
+
     # Create the Tkinter window
     root = tk.Tk()
-    root.title("Adjust PCB Height")
-    root.geometry("500x400")
+    root.title("Adjust Head Position")
+    root.geometry("600x500")  # Increased height to accommodate all elements
 
     # Add corner buttons
     tk.Button(root, text="Upper Left", command=lambda: move_to_corner("Upper Left")).place(x=50, y=50)
@@ -254,23 +269,33 @@ def adjust_pcb_height(printer, usrp, streamer):
     tk.Button(root, text="Max Height", command=move_to_max_height).place(x=150, y=150)
 
     # Add Z adjustment buttons on the right
-    tk.Button(root, text="+1 cm", command=lambda: adjust_z(10)).place(x=400, y=50)
-    tk.Button(root, text="+1 mm", command=lambda: adjust_z(1)).place(x=400, y=100)
-    tk.Button(root, text="+0.1 mm", command=lambda: adjust_z(0.1)).place(x=400, y=150)
-    tk.Button(root, text="-0.1 mm", command=lambda: adjust_z(-0.1)).place(x=400, y=200)
-    tk.Button(root, text="-1 mm", command=lambda: adjust_z(-1)).place(x=400, y=250)
-    tk.Button(root, text="-1 cm", command=lambda: adjust_z(-10)).place(x=400, y=300)
+    tk.Button(root, text="+1 cm", command=lambda: adjust_z(10)).place(x=500, y=100)
+    tk.Button(root, text="+1 mm", command=lambda: adjust_z(1)).place(x=500, y=150)
+    tk.Button(root, text="+0.1 mm", command=lambda: adjust_z(0.1)).place(x=500, y=200)
+    tk.Button(root, text="-0.1 mm", command=lambda: adjust_z(-0.1)).place(x=500, y=250)
+    tk.Button(root, text="-1 mm", command=lambda: adjust_z(-1)).place(x=500, y=300)
+    tk.Button(root, text="-1 cm", command=lambda: adjust_z(-10)).place(x=500, y=350)
 
-    # Add "Done" button
-    tk.Button(root, text="Done", command=done_callback).place(x=150, y=300)
+    # Add X-Y adjustment buttons in a cross layout
+    tk.Button(root, text="+Y", command=lambda: adjust_y(0.1)).place(x=400, y=150)  # Above
+    tk.Button(root, text="-Y", command=lambda: adjust_y(-0.1)).place(x=400, y=250)  # Below
+    tk.Button(root, text="+X", command=lambda: adjust_x(0.1)).place(x=450, y=200)  # Right
+    tk.Button(root, text="-X", command=lambda: adjust_x(-0.1)).place(x=350, y=200)  # Left
+
+    # Add a "Done" button
+    tk.Button(root, text="Done", command=done_callback).place(x=250, y=450)  # Moved down to avoid overlap
 
     # Add a label to display the measured power
     power_label = tk.Label(root, text="Power: -- dBm", font=("Helvetica", 14))
-    power_label.place(x=100, y=350)
+    power_label.place(x=100, y=400)  # Moved down to avoid overlap with the "Done" button
 
-    # Add a label to display the defined Z reference
+    # Add labels to display the defined offsets
     z_label = tk.Label(root, text=f"Defined Z: {z_height:.2f} mm", font=("Helvetica", 14))
     z_label.place(x=100, y=20)
+    x_label = tk.Label(root, text=f"X Offset: {x_offset:.2f} mm", font=("Helvetica", 14))
+    x_label.place(x=400, y=20)
+    y_label = tk.Label(root, text=f"Y Offset: {y_offset:.2f} mm", font=("Helvetica", 14))
+    y_label.place(x=400, y=60)
 
     # Start a thread for real-time power updates
     done = False
@@ -279,8 +304,8 @@ def adjust_pcb_height(printer, usrp, streamer):
     # Run the Tkinter event loop
     root.mainloop()
 
-    # Return the final Z height
-    return z_height
+    # Return the final offsets
+    return x_offset, y_offset, z_height
 
 def scan_field():
     """Perform the scanning process and save results to a JSON file."""
@@ -307,8 +332,8 @@ def scan_field():
         # Initialize the printer (home axes and calibrate Z-axis)
         printer.initialize_printer()
 
-        # Adjust PCB height and get the final Z height
-        z_height = adjust_pcb_height(printer, usrp, streamer)
+        # Adjust head position and get the final offsets
+        x_offset, y_offset, z_height = adjust_head(printer, usrp, streamer)
 
         # Add a delay after the adjustment to ensure the printer is ready
         # time.sleep(2)  # Adjust the delay as needed
@@ -324,7 +349,7 @@ def scan_field():
             for x_idx, x in enumerate(x_values):
                 # Move the probe to the (x, y) position using the adjusted Z height
                 print(f"Moving probe to X={x:.3f}, Y={y:.3f}, Z={z_height:.3f}")
-                printer.move_probe(x=x * 10, y=y * 10, z=z_height)  # Convert to mm
+                printer.move_probe(x=(x * 10) + x_offset, y=(y * 10) + y_offset, z=z_height)  # Convert to mm
 
                 # Measure the field strength using the averaged get_power_dBm with specified averages
                 try:
@@ -356,9 +381,76 @@ def scan_field():
             with open(OUTPUT_FILE, "w") as f:
                 json.dump(results, f, indent=4)
             print(f"Partial scan results saved to {OUTPUT_FILE}")
+        else:
+            print("No results to save.")
 
-    # Call plot_field() to generate the final visualization with PCB overlay
-    plot_field()
+    # Debug message before calling plot_field
+    print(f"Calling plot_field with file: {OUTPUT_FILE}")
+    plot_field(OUTPUT_FILE)
+    print("plot_field execution completed.")
+
+def get_user_choice():
+    """Display a popup window to choose between displaying a previous scan or making a new scan."""
+    def on_display_previous():
+        """Handle the 'Display Previous' button click."""
+        nonlocal choice, file_name
+        choice = "display"
+        file_name = entry.get()
+        root.destroy()
+
+    def on_scan_new():
+        """Handle the 'Scan New' button click."""
+        nonlocal choice, file_name
+        choice = "scan"
+        file_name = entry.get()
+        root.destroy()
+
+    # Create the main popup window
+    root = tk.Tk()
+    root.title("Field Scanner")
+    root.geometry("400x200")
+    root.resizable(False, False)
+
+    # Add a label for instructions
+    label = tk.Label(root, text="Enter the file name for the scan results:", font=("Helvetica", 12))
+    label.pack(pady=10)
+
+    # Add a text entry for the file name (pre-filled with OUTPUT_FILE)
+    entry = tk.Entry(root, font=("Helvetica", 12), width=40)
+    entry.insert(0, OUTPUT_FILE)  # Pre-fill with the default OUTPUT_FILE value
+    entry.pack(pady=5)
+
+    # Add a frame for the buttons
+    button_frame = tk.Frame(root)
+    button_frame.pack(pady=20)
+
+    # Add "Display Previous" and "Scan New" buttons
+    display_button = tk.Button(button_frame, text="Display Previous", font=("Helvetica", 12), command=on_display_previous)
+    display_button.pack(side="left", padx=10)
+
+    scan_button = tk.Button(button_frame, text="Scan New", font=("Helvetica", 12), command=on_scan_new)
+    scan_button.pack(side="left", padx=10)
+
+    # Initialize variables to store the user's choice and file name
+    choice = None
+    file_name = None
+
+    # Run the Tkinter event loop
+    root.mainloop()
+
+    return choice, file_name
 
 if __name__ == "__main__":
-    scan_field()
+    # Get user choice and file name
+    choice, file_name = get_user_choice()
+
+    if choice == "display":
+        print(f"Displaying previous scan from file: {file_name}")
+        print(f"Debug: Passing file path to plot_field: {file_name}")  # Debug message
+        plot_field(file_name)
+    elif choice == "scan":
+        print(f"Starting a new scan. Results will be saved to: {file_name}")
+        OUTPUT_FILE = file_name  # Update the output file name
+        scan_field()
+    else:
+        print("No valid choice made. Exiting.")
