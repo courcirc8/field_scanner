@@ -31,13 +31,17 @@ from d3d_printer import PrinterConnection  # Import the PrinterConnection class
 import time
 
 # PCB-related constants
-PCB_SIZE_CM = (2.05, 1.4)  # PCB size in centimeters (width, height)
+PCB_SIZE_CM = (2.12, 1.5)  # PCB size in centimeters (width, height)
 #PCB_SIZE_CM = (1.4, 1.4)  # PCB size in centimeters (width, height)
 
 RESOLUTION = 30  # Resolution in points per centimeter
 PCB_SIZE = (PCB_SIZE_CM[0], PCB_SIZE_CM[1])  # PCB size already in centimeters
-max_height_x_pos = 1.6  # X position of the highest component in cm
-max_height_y_pos = 1.1  # Y position of the highest component in cm
+max_height_x_pos = 0.45  # X position of the highest component in cm
+max_height_y_pos = 0.3  # Y position of the highest component in cm
+
+# Z-height-related constants
+INITIAL_Z_HEIGHT = 97.3  # Initial probing height in mm (3.4 cm)
+Z_LIFT = 1  # Lift height in mm for safe movements
 
 # Generate scanning grid based on PCB size and resolution
 STEP_SIZE = 1 / RESOLUTION  # Step size in centimeters
@@ -66,8 +70,9 @@ PRINTER_PORT = 23  # Default Telnet port for G-code communication
 SIMULATE_PRINTER = False  # Set to True to simulate the printer
 
 # Output configuration
-OUTPUT_FILE = "scan_results.json"
+OUTPUT_FILE = "scan_v1a_470ohms.json"
 DEBUG_MESSAGE = True  # Set to True to enable debug messages
+PCB_IMAGE_PATH = "./pcb.jpg"  # Path to the PCB image
 
 # Simulated EM field data (for demonstration purposes)
 def simulate_em_field(x, y):
@@ -171,12 +176,12 @@ def adjust_pcb_height(printer, usrp, streamer):
     # Ensure the printer is in absolute positioning mode
     printer.send_gcode("G90")  # Set absolute positioning
 
-    # Move the printer head up by 3 cm at feedrate 3000
-    printer.move_probe(x=0, y=0, z=34, feedrate=3000)  # This ensures Z is set initially
+    # Move the printer head up by the initial Z height
+    printer.move_probe(x=0, y=0, z=INITIAL_Z_HEIGHT, feedrate=3000)  # This ensures Z is set initially
 
     # Initialize the Z height
-    z_height = 34  # Start at 3 cm
-    z_lift = 1  # Lift height in mm
+    z_height = INITIAL_Z_HEIGHT  # Start at the initial probing height
+    z_lift = Z_LIFT  # Use the defined lift height
     pcb_corners = {
         "Upper Left": (0, PCB_SIZE_CM[1] * 10),
         "Upper Right": (PCB_SIZE_CM[0] * 10, PCB_SIZE_CM[1] * 10),
@@ -184,18 +189,21 @@ def adjust_pcb_height(printer, usrp, streamer):
         "Bottom Right": (PCB_SIZE_CM[0] * 10, 0),
     }
 
-    def move_to_corner(corner, max_height=False):
+    def move_to_corner(corner):
         """Move the probe to a specified corner."""
         x, y = pcb_corners[corner]
-        printer.move_probe(x=x, y=y, z=z_height + z_lift, feedrate=3000)  # Move up and travel
-        if not max_height:
-            printer.move_probe(x=x, y=y, z=z_height - z_lift, feedrate=3000)  # Land near PCB
+        # Lift the probe to a safe height before moving in X-Y
+        printer.move_probe(x=0, y=0, z=z_height + z_lift, feedrate=3000)  # Lift Z first
+        printer.move_probe(x=x, y=y, z=z_height + z_lift, feedrate=3000)  # Travel to the corner
+        printer.move_probe(x=x, y=y, z=z_height - z_lift, feedrate=3000)  # Lower Z to probing height
 
     def move_to_max_height():
         """Move the probe to the highest component position."""
         x = max_height_x_pos * 10  # Convert to mm
         y = max_height_y_pos * 10  # Convert to mm
-        printer.move_probe(x=x, y=y, z=z_height + z_lift, feedrate=3000)  # Move up and travel
+        # Lift the probe to a safe height before moving in X-Y
+        printer.move_probe(x=0, y=0, z=z_height + z_lift, feedrate=3000)  # Lift Z first
+        printer.move_probe(x=x, y=y, z=z_height + z_lift, feedrate=3000)  # Travel to the max height position
         printer.move_probe(x=x, y=y, z=z_height, feedrate=3000)  # Land at max Z
 
     def measure_power():
@@ -204,9 +212,17 @@ def adjust_pcb_height(printer, usrp, streamer):
             if SIMULATE_USRP:
                 power = np.random.uniform(-70, -50)  # Simulated power in dBm
             else:
-                power = measure_field_strength(usrp, streamer)
+                try:
+                    power = get_power_dBm(usrp, streamer, RX_GAIN, nb_avera, CENTER_FREQUENCY, EQUIVALENT_BW)
+                except Exception as e:
+                    print(f"Error measuring field strength: {e}")
+                    power = None
+
             if not done:
-                root.after(0, lambda: power_label.config(text=f"Power: {power:.2f} dBm"))  # Thread-safe update
+                if power is not None:
+                    root.after(0, lambda: power_label.config(text=f"Power: {power:.2f} dBm"))  # Thread-safe update
+                else:
+                    root.after(0, lambda: power_label.config(text="Power: Measurement Failed"))  # Handle None case
             time.sleep(1)  # Update every second
 
     def done_callback():
@@ -312,7 +328,7 @@ def scan_field():
 
                 # Measure the field strength using the averaged get_power_dBm with specified averages
                 try:
-                    field_strength = get_power_dBm(streamer, RX_GAIN, nb_avera)
+                    field_strength = get_power_dBm(usrp, streamer, RX_GAIN, nb_avera, CENTER_FREQUENCY, EQUIVALENT_BW)
                 except Exception as e:
                     print(f"Error measuring field strength: {e}")
                     field_strength = None
@@ -329,48 +345,20 @@ def scan_field():
             # Update the plot after completing each X line
             contour = update_plot(ax, contour, colorbar, results, x_values, y_values)
 
+    except KeyboardInterrupt:
+        print("\nScan interrupted by user. Cleaning up...")
     finally:
         # Ensure the printer is disconnected properly
         printer.disconnect()
 
-    # Save results to a JSON file
-    with open(OUTPUT_FILE, "w") as f:
-        json.dump(results, f, indent=4)
-    print(f"Scan results saved to {OUTPUT_FILE}")
+        # Save results to a JSON file if any data was collected
+        if results:
+            with open(OUTPUT_FILE, "w") as f:
+                json.dump(results, f, indent=4)
+            print(f"Partial scan results saved to {OUTPUT_FILE}")
 
-    # Redraw the plot completely at the end of measurements
-    plt.close(fig)  # Close the interactive plot
-    fig, ax = plt.subplots(figsize=(8, 6))
-    ax.set_xlabel("X (cm)")
-    ax.set_ylabel("Y (cm)")
-    ax.set_title("EM Field Strength (Final)")
-    ax.set_aspect('equal', adjustable='box')
-
-    # Extract x, y, and field_strength values for final plot
-    x = np.array([point["x"] for point in results]) * 100
-    y = np.array([point["y"] for point in results]) * 100
-    field_strength = np.array([point["field_strength"] for point in results])
-
-    # Reshape data for plotting
-    unique_x = np.unique(x_values * 100)
-    unique_y = np.unique(y_values * 100)
-    X, Y = np.meshgrid(unique_x, unique_y)
-    Z = np.full(X.shape, np.nan)
-
-    for point in results:
-        xi = np.where(unique_x == point["x"] * 100)[0][0]
-        yi = np.where(unique_y == point["y"] * 100)[0][0]
-        Z[yi, xi] = point["field_strength"]
-
-    # Create the final contour plot
-    contour = ax.contourf(X, Y, Z, cmap="viridis", levels=50)
-    plt.colorbar(contour, ax=ax, label="Field Strength (dBm)")
-
-    # Show the final plot and wait for the user to close it
-    plt.show(block=True)
-
-    # Prompt the user to press Enter to exit the program
-    input("Press Enter to exit the program.")
+    # Call plot_field() to generate the final visualization with PCB overlay
+    plot_field()
 
 if __name__ == "__main__":
     scan_field()

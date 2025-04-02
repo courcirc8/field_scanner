@@ -91,36 +91,69 @@ def receive_frame(streamer):
     except Exception:
         return None
 
-def get_power_dBm(streamer, gain, nb_avera=10):
+def get_power_dBm(usrp, streamer, gain, nb_avera=10, freq=400e6, rx_bw=10e6):
     """
     Perform multiple power measurements, average them in linear scale, and return the averaged power in dBm.
+    If measurements fail, attempt a lower-level reset of the radio before re-initializing.
 
     Args:
+        usrp: The USRP object.
         streamer: The RX streamer object.
         gain (float): Receiver gain in dB.
         nb_avera (int): Number of measurements to average.
+        freq (float): Center frequency in Hz (used for re-initialization).
+        rx_bw (float): Receiver bandwidth in Hz (used for re-initialization).
 
     Returns:
-        float: Averaged input power in dBm.
+        float: Averaged input power in dBm, or None if re-initialization fails.
     """
     linear_powers = []
 
-    for _ in range(nb_avera):
-        frame = receive_frame(streamer)
-        if frame is not None:
-            power_linear = np.mean(np.abs(frame) ** 2)  # Calculate power in linear scale
-            linear_powers.append(power_linear)
-        else:
-            print("Failed to measure power.")
-            return None
+    def reset_radio(usrp, streamer):
+        """Perform a lower-level reset of the USRP."""
+        try:
+            print("Performing a lower-level reset of the USRP...")
+            if streamer and hasattr(streamer, "issue_stream_cmd"):
+                # Stop any ongoing streams
+                streamer.issue_stream_cmd(uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont))
+            # Reset command time on the USRP object
+            if usrp and hasattr(usrp, "set_command_time"):
+                usrp.set_command_time(0.0)
+                usrp.clear_command_time()
+            time.sleep(1)  # Allow the USRP to stabilize
+            print("USRP reset complete.")
+        except Exception as e:
+            print(f"Error during USRP reset: {e}")
 
-    if linear_powers:
-        avg_linear_power = np.mean(linear_powers)
-        avg_power_dbm = 10 * np.log10(avg_linear_power + 1e-12) + 30 - gain
-        print(f"Measured power: {avg_power_dbm:.2f} dBm (averaged over {nb_avera} frames)")
-        return avg_power_dbm
-    else:
-        return None
+    for attempt in range(3):  # Allow up to two retries after re-initialization
+        for _ in range(nb_avera):
+            frame = receive_frame(streamer)
+            if frame is not None:
+                power_linear = np.mean(np.abs(frame) ** 2)  # Calculate power in linear scale
+                linear_powers.append(power_linear)
+            else:
+                print("Failed to measure power. Retrying...")
+                break  # Exit the loop to attempt a reset or re-initialization
+
+        if linear_powers:
+            avg_linear_power = np.mean(linear_powers)
+            avg_power_dbm = 10 * np.log10(avg_linear_power + 1e-12) + 30 - gain
+            print(f"Measured power: {avg_power_dbm:.2f} dBm (averaged over {nb_avera} frames)")
+            return avg_power_dbm
+        else:
+            if attempt == 0:  # Perform a lower-level reset on the first failure
+                print("Attempting a lower-level reset of the radio...")
+                reset_radio(usrp, streamer)
+            else:
+                print(f"Re-initializing the radio (attempt {attempt + 1})...")
+                time.sleep(1)  # Add a delay before re-initialization
+                usrp, streamer = initialize_radio(freq, gain, rx_bw)
+                if not usrp or not streamer:
+                    print("Failed to re-initialize the radio.")
+                    return None
+
+    print("Measurement failed after multiple re-initialization attempts.")
+    return None
 
 def main():
     """
@@ -155,7 +188,7 @@ def main():
     def update_plot(frame):
         """Update the plot with new power measurements."""
         current_time = time.time() - start_time
-        avg_power_dbm = get_power_dBm(streamer, gain, nb_avera)
+        avg_power_dbm = get_power_dBm(usrp, streamer, gain, nb_avera, freq, rx_bw)
         if avg_power_dbm is not None:
             power_data.append(avg_power_dbm)
             time_data.append(current_time)

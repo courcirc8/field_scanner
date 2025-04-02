@@ -20,7 +20,7 @@ import socket
 import time
 
 class PrinterConnection:
-    FAST_Z_MOVE = 34  # Fast Z move height in mm
+    FAST_Z_MOVE = 100  # Fast Z move height in mm
     NOZZLE_HEIGHT = 3  # Nozzle height in mm for calibration
 
     def __init__(self, ip, port=23, password_file="password.txt"):
