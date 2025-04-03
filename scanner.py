@@ -33,13 +33,13 @@ import tkinter as tk
 from tkinter import simpledialog
 
 # PCB-related constants
-PCB_SIZE_CM = (2.2, 1.5)  # PCB size in centimeters (width, height)
+PCB_SIZE_CM = (2.165, 1.53)  # PCB size in centimeters (width, height)
 #PCB_SIZE_CM = (1.4, 1.4)  # PCB size in centimeters (width, height)
 
 RESOLUTION = 30  # Resolution in points per centimeter
 PCB_SIZE = (PCB_SIZE_CM[0], PCB_SIZE_CM[1])  # PCB size already in centimeters
-max_height_x_pos = 0.45  # X position of the highest component in cm
-max_height_y_pos = 0.3  # Y position of the highest component in cm
+max_height_x_pos = 0.444  # X position of the highest component in cm
+max_height_y_pos = 0.37  # Y position of the highest component in cm
 
 # Z-height-related constants
 INITIAL_Z_HEIGHT = 97.3  # Initial probing height in mm (3.4 cm)
@@ -59,8 +59,8 @@ if len(y_values) < 2:
 X, Y = np.meshgrid(x_values, y_values)
 
 # Radio measurement configuration
-CENTER_FREQUENCY = 400e6  # Center frequency in Hz (default: 400 MHz)
-EQUIVALENT_BW = 10e6      # Equivalent bandwidth in Hz (default: 50 MHz)
+CENTER_FREQUENCY = 500e6  # Center frequency in Hz (default: 400 MHz)
+EQUIVALENT_BW = 5e6      # Equivalent bandwidth in Hz (default: 50 MHz)
 RX_GAIN = 76              # Receiver gain in dB
 WAVELENGTH = 3e8 / CENTER_FREQUENCY  # Speed of light divided by frequency
 SIMULATE_USRP = False     # Set to True to simulate the USRP
@@ -72,7 +72,7 @@ PRINTER_PORT = 23  # Default Telnet port for G-code communication
 SIMULATE_PRINTER = False  # Set to True to simulate the printer
 
 # Output configuration
-OUTPUT_FILE = "scan_v1a_470ohms_m60d.json"
+OUTPUT_FILE = "scan_v1a_500M_BW5_m60d.json"
 DEBUG_MESSAGE = True  # Set to True to enable debug messages
 PCB_IMAGE_PATH = "./pcb_die.jpg"  # Path to the PCB image
 
@@ -307,7 +307,7 @@ def adjust_head(printer, usrp, streamer):
     # Return the final offsets
     return x_offset, y_offset, z_height
 
-def scan_field():
+def scan_field(file_name):
     """Perform the scanning process and save results to a JSON file."""
     results = []
 
@@ -367,6 +367,10 @@ def scan_field():
                 else:
                     print(f"Warning: No field strength measured at X={x:.3f}, Y={y:.3f}")
 
+            # Debug message to confirm the first line of measurements is saved
+            if y_idx == 0:
+                print(f"First line of measurements saved: {results[:len(x_values)]}")
+
             # Update the plot after completing each X line
             contour = update_plot(ax, contour, colorbar, results, x_values, y_values)
 
@@ -378,15 +382,15 @@ def scan_field():
 
         # Save results to a JSON file if any data was collected
         if results:
-            with open(OUTPUT_FILE, "w") as f:
+            with open(file_name, "w") as f:  # Use the file name provided by the user
                 json.dump(results, f, indent=4)
-            print(f"Partial scan results saved to {OUTPUT_FILE}")
+            print(f"Partial scan results saved to {file_name}")
         else:
             print("No results to save.")
 
     # Debug message before calling plot_field
-    print(f"Calling plot_field with file: {OUTPUT_FILE}")
-    plot_field(OUTPUT_FILE)
+    print(f"Calling plot_field with file: {file_name}")
+    plot_field(file_name)
     print("plot_field execution completed.")
 
 def get_user_choice():
@@ -450,7 +454,6 @@ if __name__ == "__main__":
         plot_field(file_name)
     elif choice == "scan":
         print(f"Starting a new scan. Results will be saved to: {file_name}")
-        OUTPUT_FILE = file_name  # Update the output file name
-        scan_field()
+        scan_field(file_name)  # Pass the user-provided file name to scan_field
     else:
         print("No valid choice made. Exiting.")

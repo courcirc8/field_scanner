@@ -155,15 +155,46 @@ def get_power_dBm(usrp, streamer, gain, nb_avera=10, freq=400e6, rx_bw=10e6):
     print("Measurement failed after multiple re-initialization attempts.")
     return None
 
+def get_fft(streamer, ax_fft, freq, rx_bw):
+    """
+    Compute and plot the FFT of a received frame in dB.
+
+    Args:
+        streamer: The RX streamer object.
+        ax_fft: The Matplotlib axis for the FFT plot.
+        freq (float): Center frequency in Hz.
+        rx_bw (float): Receiver bandwidth in Hz.
+    """
+    frame = receive_frame(streamer)
+    if frame is None:
+        print("Failed to acquire frame for FFT.")
+        return
+
+    # Compute FFT
+    fft_data = np.fft.fftshift(np.fft.fft(frame))
+    fft_magnitude = 20 * np.log10(np.abs(fft_data) + 1e-12)  # Convert to dB
+
+    # Frequency axis
+    num_samples = len(frame)
+    freq_axis = np.linspace(freq - rx_bw / 2, freq + rx_bw / 2, num_samples)
+
+    # Clear and update the FFT plot
+    ax_fft.clear()
+    ax_fft.plot(freq_axis / 1e6, fft_magnitude, label="FFT (dB)")
+    ax_fft.set_title("Real-Time FFT")
+    ax_fft.set_xlabel("Frequency (MHz)")
+    ax_fft.set_ylabel("Magnitude (dB)")
+    ax_fft.legend()
+
 def main():
     """
     Continuously measure power every 200ms and display a graphical representation
-    with a moving window of the last 10 seconds.
+    with a moving window of the last 10 seconds, along with a real-time FFT.
     """
-    freq = 400e6  # Center frequency in Hz
+    freq = 384e6  # Center frequency in Hz
     gain = 76     # Receiver gain in dB
-    rx_bw = 10e6  # Receiver bandwidth in Hz
-    nb_avera = 100 # Number of measurements to average
+    rx_bw =5e6  # Receiver bandwidth in Hz
+    nb_avera = 100  # Number of measurements to average
 
     print("Initializing radio...")
     usrp, streamer = initialize_radio(freq, gain, rx_bw)
@@ -171,41 +202,48 @@ def main():
         print("Failed to initialize radio.")
         return
 
-    # Initialize the plot
-    plt.ion()
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.set_title("Power Over Time")
-    ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Power (dBm)")
+    # Initialize the plots
+    fig, (ax_rssi, ax_fft) = plt.subplots(2, 1, figsize=(10, 8))
+    fig.suptitle("Power and FFT Over Time")
+
+    # RSSI plot
+    ax_rssi.set_title("Power Over Time")
+    ax_rssi.set_xlabel("Time (s)")
+    ax_rssi.set_ylabel("Power (dBm)")
     power_data = deque(maxlen=50)  # Store the last 10 seconds of data (50 samples at 200ms intervals)
     time_data = deque(maxlen=50)  # Corresponding time values
-    line, = ax.plot([], [], label="Power (dBm)")
-    ax.legend()
+    line_rssi, = ax_rssi.plot([], [], label="Power (dBm)")
+    ax_rssi.legend()
 
     # Start time for the x-axis
     start_time = time.time()
 
     def update_plot(frame):
-        """Update the plot with new power measurements."""
+        """Update the RSSI and FFT plots."""
         current_time = time.time() - start_time
+
+        # Update RSSI plot
         avg_power_dbm = get_power_dBm(usrp, streamer, gain, nb_avera, freq, rx_bw)
         if avg_power_dbm is not None:
             power_data.append(avg_power_dbm)
             time_data.append(current_time)
             print(f"Averaged power: {avg_power_dbm:.2f} dBm")
 
-        # Update the line data
-        line.set_data(time_data, power_data)
-        ax.relim()
-        ax.autoscale_view()
+        # Update the line data for RSSI
+        line_rssi.set_data(time_data, power_data)
+        ax_rssi.relim()
+        ax_rssi.autoscale_view()
 
-    # Use FuncAnimation to update the plot every 200ms
+        # Update FFT plot
+        get_fft(streamer, ax_fft, freq, rx_bw)
+
+    # Use FuncAnimation to update the plots every 200ms
     ani = FuncAnimation(fig, update_plot, interval=200)
 
-    # Show the plot and wait for user input to stop
-    input("Press Enter to stop measurements...\n")
-    plt.close(fig)
+    # Show the plots and block execution until the user closes them
+    plt.show()
     print("Measurement stopped.")
 
 if __name__ == "__main__":
+    # Run the main function for debugging and FFT display
     main()
