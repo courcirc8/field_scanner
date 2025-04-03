@@ -45,6 +45,10 @@ def initialize_radio(freq, gain, rx_bw):
         usrp.set_rx_gain(gain, 0)  # Set gain
         usrp.set_rx_bandwidth(rx_bw, 0)  # Set receiver bandwidth
 
+        # Display frequency and bandwidth in MHz
+        print(f"Center Frequency: {freq / 1e6:.2f} MHz")
+        print(f"Bandwidth: {rx_bw / 1e6:.2f} MHz")
+
         # Print USRP info
         print(usrp.get_usrp_rx_info())
 

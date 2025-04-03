@@ -1,2 +1,7 @@
 # Ignore sensitive configuration files
 password.txt
+# Ignore generated and image files
+*.json
+*.png
+*.jpg
+__pycache__

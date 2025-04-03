@@ -59,9 +59,9 @@ if len(y_values) < 2:
 X, Y = np.meshgrid(x_values, y_values)
 
 # Radio measurement configuration
-CENTER_FREQUENCY = 500e6  # Center frequency in Hz (default: 400 MHz)
-EQUIVALENT_BW = 5e6      # Equivalent bandwidth in Hz (default: 50 MHz)
-RX_GAIN = 76              # Receiver gain in dB
+CENTER_FREQUENCY = 400e6  # Center frequency in Hz (default: 400 MHz)
+EQUIVALENT_BW = 10e6      # Equivalent bandwidth in Hz (default: 50 MHz)
+RX_GAIN = 76              # Receiver gain in dB 76dB in Rx 20 or 30 in Tx
 WAVELENGTH = 3e8 / CENTER_FREQUENCY  # Speed of light divided by frequency
 SIMULATE_USRP = False     # Set to True to simulate the USRP
 nb_avera = 100 # Number of measurements to average
@@ -72,7 +72,7 @@ PRINTER_PORT = 23  # Default Telnet port for G-code communication
 SIMULATE_PRINTER = False  # Set to True to simulate the printer
 
 # Output configuration
-OUTPUT_FILE = "scan_v1a_500M_BW5_m60d.json"
+OUTPUT_FILE = "scan_v1a_400MHz_Rx.json"
 DEBUG_MESSAGE = True  # Set to True to enable debug messages
 PCB_IMAGE_PATH = "./pcb_die.jpg"  # Path to the PCB image
 
@@ -118,7 +118,7 @@ def initialize_plot():
     empty_x = np.linspace(0, PCB_SIZE_CM[0], 2)  # Two points for x-axis
     empty_y = np.linspace(0, PCB_SIZE_CM[1], 2)  # Two points for y-axis
     empty_z = np.zeros((2, 2))  # 2x2 array of zeros for z-axis
-    contour = ax.contourf(empty_x, empty_y, empty_z, cmap="viridis", levels=50)  # Initialize contour
+    contour = ax.contourf(empty_x, empty_y, empty_z, cmap="viridis", levels=50, alpha=0.35)  # Set alpha to 0.35
     colorbar = plt.colorbar(contour, ax=ax, label="Field Strength (dBm)")
     return fig, ax, contour, colorbar
 
@@ -147,7 +147,7 @@ def update_plot(ax, contour, colorbar, results, x_values, y_values):
         artist.remove()  # Remove the old contour plot
 
     # Create a new contour plot
-    contour = ax.contourf(X, Y, Z, cmap="viridis", levels=50)
+    contour = ax.contourf(X, Y, Z, cmap="viridis", levels=50, alpha=0.35)  # Set alpha to 0.35
 
     # Update the colorbar without recreating it
     colorbar.update_normal(contour)  # Update the colorbar with the new contour
@@ -160,6 +160,26 @@ def update_plot(ax, contour, colorbar, results, x_values, y_values):
     plt.pause(0.1)  # Pause to update the plot
 
     return contour  # Return the updated contour object
+
+def save_scan_results(filename, results, metadata=None):
+    """
+    Save scan results to a JSON file with optional metadata.
+
+    Args:
+        filename (str): The name of the file to save the results.
+        results (list): The scan results as a list of dictionaries.
+        metadata (dict): Optional metadata to include in the file.
+    """
+    data = {
+        "metadata": metadata or {},  # Include metadata if provided
+        "results": results  # Include scan results
+    }
+    try:
+        with open(filename, "w") as f:
+            json.dump(data, f, indent=4)
+        print(f"Scan results saved to {filename}")
+    except Exception as e:
+        print(f"Error saving scan results to {filename}: {e}")
 
 def adjust_head(printer, usrp, streamer):
     """
@@ -382,16 +402,36 @@ def scan_field(file_name):
 
         # Save results to a JSON file if any data was collected
         if results:
-            with open(file_name, "w") as f:  # Use the file name provided by the user
-                json.dump(results, f, indent=4)
-            print(f"Partial scan results saved to {file_name}")
+            metadata = {
+                "PCB_SIZE": PCB_SIZE_CM,
+                "resolution": RESOLUTION,
+                "center_freq": CENTER_FREQUENCY,  # Stored in Hz
+                "BW": EQUIVALENT_BW,  # Stored in Hz
+                "nb_average": nb_avera
+            }
+
+            # Display metadata in MHz
+            print("Metadata for the scan:")
+            print(f"  PCB Size: {metadata['PCB_SIZE']}")
+            print(f"  Resolution: {metadata['resolution']}")
+            print(f"  Center Frequency: {metadata['center_freq'] / 1e6:.2f} MHz")
+            print(f"  Bandwidth: {metadata['BW'] / 1e6:.2f} MHz")
+            print(f"  Number of Averages: {metadata['nb_average']}")
+
+            save_scan_results(file_name, results, metadata)
+
+            # Save the plot as an image file
+            plot_image_path = file_name.replace(".json", ".png")
+            print(f"Calling plot_field with file: {file_name}")
+            plot_field(file_name, save_path=plot_image_path)  # Save the plot with alpha=0.35
+            print(f"Plot saved as: {plot_image_path}")
         else:
             print("No results to save.")
 
-    # Debug message before calling plot_field
-    print(f"Calling plot_field with file: {file_name}")
-    plot_field(file_name)
-    print("plot_field execution completed.")
+        # Debug message before calling plot_field
+        print(f"Calling plot_field with file: {file_name}")
+        plot_field(file_name)  # plot_field will handle the conversion to MHz
+        print("plot_field execution completed.")
 
 def get_user_choice():
     """Display a popup window to choose between displaying a previous scan or making a new scan."""
@@ -451,7 +491,7 @@ if __name__ == "__main__":
     if choice == "display":
         print(f"Displaying previous scan from file: {file_name}")
         print(f"Debug: Passing file path to plot_field: {file_name}")  # Debug message
-        plot_field(file_name)
+        plot_field(file_name)  # Removed alpha argument
     elif choice == "scan":
         print(f"Starting a new scan. Results will be saved to: {file_name}")
         scan_field(file_name)  # Pass the user-provided file name to scan_field
