@@ -35,7 +35,7 @@ HORIZONTAL_FLIP = False  # Flip the PCB image horizontally
 SECOND_INPUT_FILE = "./scan_v1a_915MHz_Tx_HA3.json"
 SECOND_PCB_IMAGE_PATH = "./pcb_die.jpg"
 
-def plot_field(input_file, save_path=None):
+def plot_field(input_file, pcb_image_path, save_path=None):
     """Plot the EM field strength from the scan results with PCB overlay and transparency adjustment."""
     try:
         print(f"Loading scan results from: {input_file}")  # Debug message
@@ -99,9 +99,9 @@ def plot_field(input_file, save_path=None):
 
         # Load and rotate the PCB image
         try:
-            pcb_image = Image.open(PCB_IMAGE_PATH)
+            pcb_image = Image.open(pcb_image_path)  # Use the parameter instead of the global variable
         except FileNotFoundError:
-            print(f"Error: PCB image file not found at path: {PCB_IMAGE_PATH}")  # Specific error message
+            print(f"Error: PCB image file not found at path: {pcb_image_path}")  # Specific error message
             return
 
         if VERTICAL_FLIP:

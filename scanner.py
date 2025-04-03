@@ -33,10 +33,11 @@ import tkinter as tk
 from tkinter import simpledialog
 
 # PCB-related constants
-PCB_SIZE_CM = (2.165, 1.53)  # PCB size in centimeters (width, height)
-#PCB_SIZE_CM = (1.4, 1.4)  # PCB size in centimeters (width, height)
+#PCB_SIZE_CM = (2.165, 1.53)  # PCB size in centimeters (width, height)
 
-RESOLUTION = 30  # Resolution in points per centimeter
+PCB_SIZE_CM = (0.5, 0.5)  # PCB size in centimeters (width, height)
+
+RESOLUTION = 100  # Resolution in points per centimeter
 PCB_SIZE = (PCB_SIZE_CM[0], PCB_SIZE_CM[1])  # PCB size already in centimeters
 max_height_x_pos = 0.444  # X position of the highest component in cm
 max_height_y_pos = 0.37  # Y position of the highest component in cm
@@ -61,7 +62,7 @@ X, Y = np.meshgrid(x_values, y_values)
 # Radio measurement configuration
 CENTER_FREQUENCY = 400e6  # Center frequency in Hz (default: 400 MHz)
 EQUIVALENT_BW = 10e6      # Equivalent bandwidth in Hz (default: 50 MHz)
-RX_GAIN = 76              # Receiver gain in dB 76dB in Rx 20 or 30 in Tx
+RX_GAIN = 60              # Receiver gain in dB 76dB in Rx 20 or 30 in Tx
 WAVELENGTH = 3e8 / CENTER_FREQUENCY  # Speed of light divided by frequency
 SIMULATE_USRP = False     # Set to True to simulate the USRP
 nb_avera = 100 # Number of measurements to average
@@ -72,9 +73,11 @@ PRINTER_PORT = 23  # Default Telnet port for G-code communication
 SIMULATE_PRINTER = False  # Set to True to simulate the printer
 
 # Output configuration
-OUTPUT_FILE = "scan_v1a_400MHz_Rx.json"
+OUTPUT_FILE = "scan_v1a_400MHz_Rx_die.json"
 DEBUG_MESSAGE = True  # Set to True to enable debug messages
-PCB_IMAGE_PATH = "./pcb_die.jpg"  # Path to the PCB image
+#PCB_IMAGE_PATH = "./pcb_die.jpg"  # Path to the PCB image
+PCB_IMAGE_PATH = "./die_only.jpg"  # Path to the PCB image
+
 
 # Simulated EM field data (for demonstration purposes)
 def simulate_em_field(x, y):
@@ -423,14 +426,14 @@ def scan_field(file_name):
             # Save the plot as an image file
             plot_image_path = file_name.replace(".json", ".png")
             print(f"Calling plot_field with file: {file_name}")
-            plot_field(file_name, save_path=plot_image_path)  # Save the plot with alpha=0.35
+            plot_field(file_name, PCB_IMAGE_PATH, save_path=plot_image_path)  # Pass PCB_IMAGE_PATH as an argument
             print(f"Plot saved as: {plot_image_path}")
         else:
             print("No results to save.")
 
         # Debug message before calling plot_field
         print(f"Calling plot_field with file: {file_name}")
-        plot_field(file_name)  # plot_field will handle the conversion to MHz
+        plot_field(file_name, PCB_IMAGE_PATH)  # Pass PCB_IMAGE_PATH as an argument
         print("plot_field execution completed.")
 
 def get_user_choice():
@@ -491,7 +494,7 @@ if __name__ == "__main__":
     if choice == "display":
         print(f"Displaying previous scan from file: {file_name}")
         print(f"Debug: Passing file path to plot_field: {file_name}")  # Debug message
-        plot_field(file_name)  # Removed alpha argument
+        plot_field(file_name, PCB_IMAGE_PATH)  # Pass PCB_IMAGE_PATH as an argument
     elif choice == "scan":
         print(f"Starting a new scan. Results will be saved to: {file_name}")
         scan_field(file_name)  # Pass the user-provided file name to scan_field
