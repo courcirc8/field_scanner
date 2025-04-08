@@ -25,14 +25,14 @@ from matplotlib.widgets import Slider, Button  # Import Slider and Button widget
 from PIL import Image  # Import for image rotation
 from scipy.interpolate import griddata  # Import for interpolation
 
-INPUT_FILE = "./scan_v1a_915MHz_Tx.json"
+INPUT_FILE = "./scan_v1a_400MHz_Rx_module1.json"
 PCB_IMAGE_PATH = "./pcb_die.jpg"  # Path to the PCB image
 PCB_IMAGE_ROTATION = 0  # Rotation angle in degrees
 VERTICAL_FLIP = True  # Flip the PCB image vertically
 HORIZONTAL_FLIP = False  # Flip the PCB image horizontally
 
 # Constants for the second measurement and PCB image
-SECOND_INPUT_FILE = "./scan_v1a_915MHz_Tx_HA3.json"
+SECOND_INPUT_FILE = "./scan_v1a_400MHz_Rx_module2_nores_patched.json"
 SECOND_PCB_IMAGE_PATH = "./pcb_die.jpg"
 
 def plot_field(input_file, pcb_image_path, save_path=None):
