@@ -31,13 +31,12 @@ from d3d_printer import PrinterConnection  # Import the PrinterConnection class
 import time
 import tkinter as tk
 from tkinter import simpledialog
+import os
 
 # PCB-related constants
-#PCB_SIZE_CM = (2.165, 1.53)  # PCB size in centimeters (width, height)
+PCB_SIZE_CM = (2.165, 1.53)  # PCB size in centimeters (width, height)
 
-PCB_SIZE_CM = (0.5, 0.5)  # PCB size in centimeters (width, height)
-
-RESOLUTION = 100  # Resolution in points per centimeter
+RESOLUTION = 30  # Resolution in points per centimeter
 PCB_SIZE = (PCB_SIZE_CM[0], PCB_SIZE_CM[1])  # PCB size already in centimeters
 max_height_x_pos = 0.444  # X position of the highest component in cm
 max_height_y_pos = 0.37  # Y position of the highest component in cm
@@ -62,7 +61,7 @@ X, Y = np.meshgrid(x_values, y_values)
 # Radio measurement configuration
 CENTER_FREQUENCY = 400e6  # Center frequency in Hz (default: 400 MHz)
 EQUIVALENT_BW = 10e6      # Equivalent bandwidth in Hz (default: 50 MHz)
-RX_GAIN = 60              # Receiver gain in dB 76dB in Rx 20 or 30 in Tx
+RX_GAIN = 76              # Receiver gain in dB 76dB in Rx 20 or 30 in Tx
 WAVELENGTH = 3e8 / CENTER_FREQUENCY  # Speed of light divided by frequency
 SIMULATE_USRP = False     # Set to True to simulate the USRP
 nb_avera = 100 # Number of measurements to average
@@ -73,11 +72,9 @@ PRINTER_PORT = 23  # Default Telnet port for G-code communication
 SIMULATE_PRINTER = False  # Set to True to simulate the printer
 
 # Output configuration
-OUTPUT_FILE = "scan_v1a_400MHz_Rx_die.json"
+OUTPUT_FILE = "scan_v1a_400MHz_Rx_module1.json"
 DEBUG_MESSAGE = True  # Set to True to enable debug messages
-#PCB_IMAGE_PATH = "./pcb_die.jpg"  # Path to the PCB image
-PCB_IMAGE_PATH = "./die_only.jpg"  # Path to the PCB image
-
+PCB_IMAGE_PATH = "./pcb_die.jpg"  # Path to the PCB image
 
 # Simulated EM field data (for demonstration purposes)
 def simulate_em_field(x, y):
@@ -183,6 +180,88 @@ def save_scan_results(filename, results, metadata=None):
         print(f"Scan results saved to {filename}")
     except Exception as e:
         print(f"Error saving scan results to {filename}: {e}")
+
+def show_rotate_probe_dialog():
+    """Show dialog asking user to rotate probe."""
+    root = tk.Tk()
+    root.title("Rotate Probe")
+    root.geometry("400x200")
+    
+    label = tk.Label(root, text="Please rotate probe by 90° and press Done", 
+                    font=("Helvetica", 12))
+    label.pack(pady=30)
+    
+    def on_done():
+        root.destroy()
+    
+    button = tk.Button(root, text="Done", command=on_done, font=("Helvetica", 12))
+    button.pack()
+    
+    root.mainloop()
+
+def combine_scans(file_0d, file_90d):
+    """Combine two perpendicular scans using sqrt(x²+y²)."""
+    with open(file_0d, 'r') as f:
+        data_0d = json.load(f)
+    with open(file_90d, 'r') as f:
+        data_90d = json.load(f)
+        
+    # Convert dBm to linear power
+    power_0d = np.power(10, np.array([p["field_strength"] for p in data_0d["results"]]) / 10)
+    power_90d = np.power(10, np.array([p["field_strength"] for p in data_90d["results"]]) / 10)
+    
+    # Calculate combined power
+    power_combined = np.sqrt(np.power(power_0d, 2) + np.power(power_90d, 2))
+    
+    # Convert back to dBm
+    combined_dbm = 10 * np.log10(power_combined)
+    
+    # Create combined results
+    combined_results = []
+    for i, point in enumerate(data_0d["results"]):
+        combined_results.append({
+            "x": point["x"],
+            "y": point["y"],
+            "field_strength": float(combined_dbm[i])
+        })
+    
+    return {"metadata": data_0d["metadata"], "results": combined_results}
+
+def plot_with_selector(file_0d, file_90d):
+    """Plot results with angle selector."""
+    # Load data
+    with open(file_0d, 'r') as f:
+        data_0d = json.load(f)
+    with open(file_90d, 'r') as f:
+        data_90d = json.load(f)
+    data_combined = combine_scans(file_0d, file_90d)
+    
+    # Save combined data for compatibility with plot_field
+    combined_file = file_0d.replace('_0d.json', '_combined.json')
+    with open(combined_file, 'w') as f:
+        json.dump(data_combined, f)
+    
+    # Create figure
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111)
+    
+    # Add radio buttons for selection
+    rax = plt.axes([0.02, 0.7, 0.12, 0.15])
+    radio = plt.RadioButtons(rax, ('0° scan', '90° scan', 'Combined'))
+    
+    def update_plot(label):
+        ax.clear()
+        if label == '0° scan':
+            plot_field(file_0d, PCB_IMAGE_PATH)
+        elif label == '90° scan':
+            plot_field(file_90d, PCB_IMAGE_PATH)
+        else:
+            plot_field(combined_file, PCB_IMAGE_PATH)
+    
+    radio.on_clicked(update_plot)
+    update_plot('0° scan')  # Initial plot
+    plt.show()
+
 
 def adjust_head(printer, usrp, streamer):
     """
@@ -330,45 +409,16 @@ def adjust_head(printer, usrp, streamer):
     # Return the final offsets
     return x_offset, y_offset, z_height
 
-def scan_field(file_name):
-    """Perform the scanning process and save results to a JSON file."""
+def scan_single_orientation(file_name, printer, usrp, streamer, x_offset, y_offset, z_height):
+    """Perform single scan with adjusted head position."""
     results = []
 
-    # Initialize the radio once
-    usrp, streamer = (None, None)
-    if not SIMULATE_USRP:
-        usrp, streamer = initialize_radio(CENTER_FREQUENCY, RX_GAIN, EQUIVALENT_BW)
-        if not usrp or not streamer:
-            print("Failed to initialize radio. Exiting scan.")
-            return
-
-    # Initialize the 3D printer connection
-    printer = PrinterConnection(PRINTER_IP, PRINTER_PORT)
-    printer.connect()
-
-    # Terminate if the printer connection fails
-    if not printer.socket:
-        print("Failed to connect to the 3D printer. Possible authentication issue. Exiting scan.")
-        return
-
     try:
-        # Initialize the printer (home axes and calibrate Z-axis)
-        printer.initialize_printer()
-
-        # Adjust head position and get the final offsets
-        x_offset, y_offset, z_height = adjust_head(printer, usrp, streamer)
-
-        # Add a delay after the adjustment to ensure the printer is ready
-        # time.sleep(2)  # Adjust the delay as needed
-
         # Initialize the interactive plot
         fig, ax, contour, colorbar = initialize_plot()
 
         # Main scanning loop
         for y_idx, y in enumerate(y_values):
-            # Add a delay at the beginning of each new line
-            # time.sleep(0.5)
-
             for x_idx, x in enumerate(x_values):
                 # Move the probe to the (x, y) position using the adjusted Z height
                 print(f"Moving probe to X={x:.3f}, Y={y:.3f}, Z={z_height:.3f}")
@@ -390,19 +440,12 @@ def scan_field(file_name):
                 else:
                     print(f"Warning: No field strength measured at X={x:.3f}, Y={y:.3f}")
 
-            # Debug message to confirm the first line of measurements is saved
-            if y_idx == 0:
-                print(f"First line of measurements saved: {results[:len(x_values)]}")
-
             # Update the plot after completing each X line
             contour = update_plot(ax, contour, colorbar, results, x_values, y_values)
 
     except KeyboardInterrupt:
         print("\nScan interrupted by user. Cleaning up...")
     finally:
-        # Ensure the printer is disconnected properly
-        printer.disconnect()
-
         # Save results to a JSON file if any data was collected
         if results:
             metadata = {
@@ -412,14 +455,6 @@ def scan_field(file_name):
                 "BW": EQUIVALENT_BW,  # Stored in Hz
                 "nb_average": nb_avera
             }
-
-            # Display metadata in MHz
-            print("Metadata for the scan:")
-            print(f"  PCB Size: {metadata['PCB_SIZE']}")
-            print(f"  Resolution: {metadata['resolution']}")
-            print(f"  Center Frequency: {metadata['center_freq'] / 1e6:.2f} MHz")
-            print(f"  Bandwidth: {metadata['BW'] / 1e6:.2f} MHz")
-            print(f"  Number of Averages: {metadata['nb_average']}")
 
             save_scan_results(file_name, results, metadata)
 
@@ -431,10 +466,61 @@ def scan_field(file_name):
         else:
             print("No results to save.")
 
-        # Debug message before calling plot_field
         print(f"Calling plot_field with file: {file_name}")
         plot_field(file_name, PCB_IMAGE_PATH)  # Pass PCB_IMAGE_PATH as an argument
         print("plot_field execution completed.")
+
+def scan_field(file_name):
+    """Perform both 0° and 90° scans."""
+    # Modify file names
+    file_0d = file_name.replace('.json', '_0d.json')
+    file_90d = file_name.replace('.json', '_90d.json')
+        
+    # Initialize the radio once
+    usrp, streamer = (None, None)
+    if not SIMULATE_USRP:
+        usrp, streamer = initialize_radio(CENTER_FREQUENCY, RX_GAIN, EQUIVALENT_BW)
+        if not usrp or not streamer:
+            print("Failed to initialize radio. Exiting scan.")
+            return
+
+    # Initialize the 3D printer connection
+    printer = PrinterConnection(PRINTER_IP, PRINTER_PORT)
+    printer.connect()
+
+    # Terminate if the printer connection fails
+    if not printer.socket:
+        print("Failed to connect to the 3D printer. Possible authentication issue. Exiting scan.")
+        return
+
+    try:
+        # Initialize the printer (home axes and calibrate Z-axis)
+        printer.initialize_printer()
+
+        # Adjust head position and get the final offsets using graphical adjustment
+        print("Starting graphical adjustment of the probe head...")
+        x_offset, y_offset, z_height = adjust_head(printer, usrp, streamer)
+        print("Graphical adjustment completed.")
+
+        # First scan (0°)
+        print("Starting 0° scan...")
+        scan_single_orientation(file_0d, printer, usrp, streamer, x_offset, y_offset, z_height)
+        
+        # Show rotation dialog
+        show_rotate_probe_dialog()
+        
+        # Second scan (90°)
+        print("Starting 90° scan...")
+        scan_single_orientation(file_90d, printer, usrp, streamer, x_offset, y_offset, z_height)
+        
+        # Plot results with selector
+        plot_with_selector(file_0d, file_90d)
+
+    except KeyboardInterrupt:
+        print("\nScan interrupted by user. Cleaning up...")
+    finally:
+        # Ensure the printer is disconnected properly
+        printer.disconnect()
 
 def get_user_choice():
     """Display a popup window to choose between displaying a previous scan or making a new scan."""
@@ -488,15 +574,21 @@ def get_user_choice():
     return choice, file_name
 
 if __name__ == "__main__":
-    # Get user choice and file name
     choice, file_name = get_user_choice()
-
+    
     if choice == "display":
-        print(f"Displaying previous scan from file: {file_name}")
-        print(f"Debug: Passing file path to plot_field: {file_name}")  # Debug message
-        plot_field(file_name, PCB_IMAGE_PATH)  # Pass PCB_IMAGE_PATH as an argument
+        if "_0d.json" in file_name or "_90d.json" in file_name:
+            # Display combined view for dual scans
+            base_name = file_name.replace('_0d.json', '').replace('_90d.json', '')
+            file_0d = base_name + '_0d.json'
+            file_90d = base_name + '_90d.json'
+            if os.path.exists(file_0d) and os.path.exists(file_90d):
+                plot_with_selector(file_0d, file_90d)
+            else:
+                plot_field(file_name, PCB_IMAGE_PATH)
+        else:
+            plot_field(file_name, PCB_IMAGE_PATH)
     elif choice == "scan":
-        print(f"Starting a new scan. Results will be saved to: {file_name}")
-        scan_field(file_name)  # Pass the user-provided file name to scan_field
+        scan_field(file_name)
     else:
         print("No valid choice made. Exiting.")
