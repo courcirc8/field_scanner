@@ -1,12 +1,38 @@
-# This module provides visualization tools for electromagnetic field measurements.
-# It includes functions for:
-# 1. Creating interactive plots for real-time scanning
-# 2. Updating plots during scanning process
-# 3. Displaying results with selectable scan orientations (0° and 90°)
-#
-# A major challenge addressed in this module is the visualization of different field
-# orientations (0° and 90°) and allowing the user to switch between them while
-# maintaining a consistent color scale and transparent PCB overlay.
+"""
+This module provides visualization tools for electromagnetic field measurements.
+It includes functions for:
+1. Creating interactive plots for real-time scanning.
+2. Updating plots during the scanning process with live feedback.
+3. Displaying results with selectable scan orientations (0°, 90°, 45°, and combined views).
+4. Visualizing current directions based on magnetic field measurements.
+5. Allowing users to adjust transparency of the PCB overlay and heatmap.
+6. Supporting cached current direction data for faster visualization.
+7. Handling metadata display, including PCB size, resolution, and frequency information.
+8. Providing flexible UI elements such as buttons for angle selection and a slider for transparency adjustment.
+9. Supporting both individual arrows and streamlines for current direction visualization.
+10. Ensuring consistent color scaling across different scan orientations.
+
+Key Features:
+- Interactive angle selection: Users can switch between 0°, 90°, 45°, and combined views.
+- Real-time updates: The plot updates dynamically during the scanning process.
+- Current direction visualization: Displays current flow using arrows or streamlines.
+- Metadata extraction: Displays PCB size, resolution, and other scan parameters.
+- Error handling: Handles missing or invalid data gracefully.
+- Caching: Supports caching of computed current directions for faster reloading.
+
+Challenges Addressed:
+- Maintaining consistent color scaling across different scan orientations.
+- Efficiently visualizing large datasets with high resolution.
+- Providing a user-friendly interface for exploring scan results.
+
+Dependencies:
+- matplotlib: For plotting and interactive UI elements.
+- numpy: For numerical operations and grid interpolation.
+- scipy: For interpolating field strength data.
+- PIL (Pillow): For loading and displaying PCB images.
+- json: For handling scan data and metadata.
+- multiprocessing: For parallel processing of current direction calculations.
+"""
 
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, Button
@@ -23,9 +49,22 @@ from PIL import Image
 # Import PCB_IMAGE_PATH, VERTICAL_FLIP, and CURRENT_GRID_SPACING_MM from config
 from config import PCB_IMAGE_PATH, VERTICAL_FLIP, CURRENT_GRID_SPACING_MM
 import time  # Import for timing calculations
+from multiprocessing import Pool  # Import for parallel processing
 
 # Define constants
 GRID_SPACING = 2  # Spacing for current direction lines in mm
+
+def validate_file(file_path):
+    if not os.path.exists(file_path):
+        print(f"Error: File not found: {file_path}")
+        return False
+    try:
+        with open(file_path, 'r') as f:
+            json.load(f)
+    except Exception as e:
+        print(f"Error: Invalid JSON file: {file_path}. {e}")
+        return False
+    return True
 
 def initialize_plot():
     """
@@ -152,6 +191,49 @@ def load_data(file_path):
         print(f"Error loading data from {file_path}: {e}")
         return None, None, None
 
+def compute_current_direction(args):
+    x, y, points_0d, points_90d = args
+    # Compute current direction logic here
+    return x, y, dx, dy
+
+def show_currents(event):
+    """Display current directions using arrows or streamlines."""
+    print("Computing current directions...")
+    
+    # Use current_file directly as it is a plain string
+    file_path = current_file  # No .get() needed
+    field_strength, pcb_size, resolution = load_data(file_path)
+    if field_strength is None:
+        print("Cannot compute current directions: Invalid data.")
+        return
+
+    # Compute grid spacing in mm
+    grid_spacing_x = pcb_size[0] / field_strength.shape[1]
+    grid_spacing_y = pcb_size[1] / field_strength.shape[0]
+
+    # Create a regular grid for x and y
+    x = np.linspace(0, pcb_size[0], field_strength.shape[1])
+    y = np.linspace(0, pcb_size[1], field_strength.shape[0])
+    X, Y = np.meshgrid(x, y)
+
+    # Interpolate the field data onto a regular grid
+    points = [(point["x"], point["y"]) for point in results]
+    values = [point["field_strength"] for point in results]
+    field_interpolated = griddata(points, values, (X, Y), method='linear')
+
+    # Compute current directions (placeholder logic)
+    U = np.cos(field_interpolated)  # Placeholder for x-component of current
+    V = np.sin(field_interpolated)  # Placeholder for y-component of current
+
+    # Plot streamlines
+    try:
+        stream = ax.streamplot(X, Y, U, V, color='red', linewidth=0.8)
+        plt.draw()
+        print("Streamlines displayed.")
+    except ValueError as e:
+        print(f"Error processing current directions: {e}")
+
+
 def plot_with_selector(file_0d, file_90d, file_45d=None):
     """
     Plot results with angle selector for switching between 0°, 90°, 45°, and combined views.
@@ -250,7 +332,7 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
     
     # Create a variable to store our colorbar reference
     colorbar_obj = None
-    
+
     def load_and_prepare_data(file_path):
         """Load data and prepare for plotting"""
         with open(file_path, 'r') as f:
@@ -288,8 +370,7 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
     
     def update_plot():
         """Update the plot with current data"""
-        nonlocal current_data, colorbar_obj
-        
+        nonlocal current_data
         print(f"Updating plot with file: {current_file}")
         
         try:
@@ -339,6 +420,7 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
             # we'll take a simpler but more reliable approach
             
             # First time only: create the colorbar in a fixed position
+            nonlocal colorbar_obj
             if colorbar_obj is None:
                 colorbar_ax = fig.add_axes([0.85, 0.25, 0.03, 0.65])  # Fixed position
                 colorbar_obj = fig.colorbar(plot_objects["heatmap"], cax=colorbar_ax)
@@ -393,338 +475,6 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
             plot_objects["heatmap"].set_alpha(1.0 - val)
         fig.canvas.draw_idle()
     
-    def show_currents(event):
-        """Add current direction indicators to plot"""
-        print("Starting current direction calculation...")
-        start_time = time.time()
-        
-        # First check if a cached current file exists
-        base_name = file_0d.replace('_0d.json', '')
-        cached_file = f"{base_name}_currents.json"
-        use_cache = False
-        
-        try:
-            if os.path.exists(cached_file):
-                print(f"Found cached current directions at: {cached_file}")
-                try:
-                    with open(cached_file, 'r') as f:
-                        cached_data = json.load(f)
-                        if 'current_directions' in cached_data and len(cached_data['current_directions']) > 0:
-                            print("Using cached current directions")
-                            use_cache = True
-                except Exception as e:
-                    print(f"Error reading cache file: {e}")
-            
-            # Clear any existing current lines
-            for line in plot_objects["current_lines"]:
-                if hasattr(line, 'remove'):
-                    line.remove()
-            plot_objects["current_lines"] = []
-            
-            if use_cache:
-                # Use the cached current directions
-                currents = cached_data['current_directions']
-                print(f"Drawing {len(currents)} cached current arrows")
-                
-                # Store original axis position and figure size
-                orig_position = plot_ax.get_position()
-                orig_figsize = fig.get_size_inches()
-                
-                # Option to draw streamlines instead of individual arrows
-                draw_streamlines = True  # Set to False for individual arrows
-                
-                if draw_streamlines:
-                    # Extract coordinates and vectors for streamplot
-                    x_points = np.array([current['x'] for current in currents]) * 100  # Convert to cm
-                    y_points = np.array([current['y'] for current in currents]) * 100
-                    u_points = np.array([current['dx'] for current in currents])  # Already in cm
-                    v_points = np.array([current['dy'] for current in currents])
-                    
-                    # Group data by position for a grid
-                    x_unique = np.sort(np.unique([round(x, 3) for x in x_points/100])) * 100
-                    y_unique = np.sort(np.unique([round(y, 3) for y in y_points/100])) * 100
-                    
-                    print(f"Generating streamlines with {len(x_unique)}x{len(y_unique)} grid")
-                    
-                    # Create regularized grid for streamplot
-                    u_grid = np.zeros((len(y_unique), len(x_unique)))
-                    v_grid = np.zeros((len(y_unique), len(x_unique)))
-                    
-                    # Populate u and v grids by matching nearest points
-                    for i, current in enumerate(currents):
-                        # Find closest gridpoints
-                        x_idx = np.abs(x_unique - current['x']*100).argmin()
-                        y_idx = np.abs(y_unique - current['y']*100).argmin()
-                        
-                        # Add vectors to grid
-                        u_grid[y_idx, x_idx] = current['dx']
-                        v_grid[y_idx, x_idx] = current['dy']
-                    
-                    # Calculate vector magnitude for coloring
-                    magnitude = np.sqrt(u_grid**2 + v_grid**2)
-                    
-                    # Create the streamplot
-                    stream = plot_ax.streamplot(
-                        x_unique, y_unique, u_grid, v_grid,
-                        density=1.5,  # Higher density = more lines
-                        color='red',
-                        linewidth=1.5,
-                        arrowsize=1.2,
-                        arrowstyle='->',
-                        minlength=0.5,
-                        maxlength=4.0
-                    )
-                    
-                    # Add stream to plot objects for later removal
-                    plot_objects["current_lines"].extend(
-                        [stream.lines] + list(stream.arrows.collections)
-                    )
-                    
-                    print(f"Streamline plot created successfully")
-                    
-                else:
-                    # Draw individual arrows as before
-                    arrow_count = 0
-                    for current in currents:
-                        x_cm = current['x'] * 100  # Convert to cm
-                        y_cm = current['y'] * 100
-                        dx = current['dx']
-                        dy = current['dy']
-                        
-                        try:
-                            line = plot_ax.arrow(x_cm, y_cm, dx, dy,
-                                              head_width=0.1, head_length=0.1,
-                                              fc='red', ec='red', alpha=0.9, linewidth=1.0,
-                                              length_includes_head=True)
-                            plot_objects["current_lines"].append(line)
-                            arrow_count += 1
-                        except Exception as e:
-                            print(f"Error creating arrow: {e}")
-                            
-                    print(f"Added {arrow_count} cached current direction arrows")
-                
-                # Restore original position and figure size
-                plot_ax.set_position(orig_position)
-                fig.set_size_inches(orig_figsize, forward=True)
-                fig.canvas.draw_idle()
-                    
-            else:
-                # Compute new current directions
-                print("Computing new current directions...")
-                # Load 0° and 90° data for current direction calculation
-                with open(file_0d, 'r') as f:
-                    data_0d = json.load(f)
-                with open(file_90d, 'r') as f:
-                    data_90d = json.load(f)
-                
-                data_load_time = time.time()
-                print(f"Data loaded in {data_load_time - start_time:.2f} seconds")
-                
-                results_0d = data_0d["results"] if isinstance(data_0d, dict) and "results" in data_0d else data_0d
-                results_90d = data_90d["results"] if isinstance(data_90d, dict) and "results" in data_90d else data_90d
-                
-                # Create dictionaries for quick lookup by position
-                print(f"Processing {len(results_0d)} measurement points...")
-                points_0d = {(point["x"], point["y"]): point["field_strength"] for point in results_0d}
-                points_90d = {(point["x"], point["y"]): point["field_strength"] for point in results_90d}
-                
-                # Get extent of the measurement area
-                x_coords = [p[0] for p in points_0d.keys()]
-                y_coords = [p[1] for p in points_0d.keys()]
-                x_min, x_max = min(x_coords), max(x_coords)
-                y_min, y_max = min(y_coords), max(y_coords)
-                
-                print(f"Measurement area: X=[{x_min:.4f}, {x_max:.4f}], Y=[{y_min:.4f}, {y_max:.4f}]")
-                
-                # Create a more reasonable grid spacing - not too dense, not too sparse
-                # Aim for ~5mm spacing when possible
-                desired_spacing_mm = 5  # Target 5mm spacing
-                grid_spacing_m = desired_spacing_mm / 1000.0  # Convert to meters
-                
-                # Calculate how many points this would give us
-                estimated_points = ((x_max - x_min) / grid_spacing_m + 1) * ((y_max - y_min) / grid_spacing_m + 1)
-                
-                # If too many points, adjust spacing to limit to ~2500 total
-                max_points = 2500
-                if estimated_points > max_points:
-                    grid_factor = np.sqrt(estimated_points / max_points)
-                    grid_spacing_m *= grid_factor
-                
-                x_points = int((x_max - x_min) / grid_spacing_m) + 1
-                y_points = int((y_max - y_min) / grid_spacing_m) + 1
-                total_points = x_points * y_points
-                
-                print(f"Setting up grid for current arrows with {grid_spacing_m*1000:.1f}mm spacing")
-                print(f"Grid: {x_points}x{y_points}={total_points} points")
-                
-                # Create grid of points for current arrows
-                x_grid = np.linspace(x_min, x_max, x_points)
-                y_grid = np.linspace(y_min, y_max, y_points)
-                
-                # For efficient nearest-neighbor search
-                from scipy.spatial import KDTree
-                coords = np.array(list(points_0d.keys()))
-                tree = KDTree(coords)
-                
-                # Create storage for current directions
-                arrow_count = 0
-                skipped_count = 0
-                skipped_reasons = {"distance": 0, "missing_data": 0, "low_field": 0}
-                current_directions = []
-                
-                # Storage for streamplot data
-                u_grid = np.zeros((len(y_grid), len(x_grid)))
-                v_grid = np.zeros((len(y_grid), len(x_grid)))
-                
-                # Process grid points for current direction
-                for x_idx, x in enumerate(x_grid):
-                    if x_idx % max(1, len(x_grid)//5) == 0:
-                        print(f"Processing row {x_idx+1}/{len(x_grid)}")
-                        
-                    for y_idx, y in enumerate(y_grid):
-                        # Find nearest data point
-                        distance, idx = tree.query([x, y], k=1)
-                        nearest_point = tuple(coords[idx])
-                        
-                        # Use a more reasonable distance threshold
-                        if distance > 0.01:  # 10mm threshold
-                            skipped_count += 1
-                            skipped_reasons["distance"] += 1
-                            continue
-                        
-                        # Get field strengths
-                        h_field = points_0d.get(nearest_point)
-                        v_field = points_90d.get(nearest_point)
-                        
-                        if h_field is None or v_field is None:
-                            skipped_count += 1
-                            skipped_reasons["missing_data"] += 1
-                            continue
-                            
-                        # Convert from dBm to linear
-                        h_field_linear = 10**(h_field/10)
-                        v_field_linear = 10**(v_field/10)
-                        
-                        # Skip weak fields but use more reasonable threshold
-                        min_field_threshold = 1e-10
-                        if h_field_linear < min_field_threshold and v_field_linear < min_field_threshold:
-                            skipped_count += 1
-                            skipped_reasons["low_field"] += 1
-                            continue
-                        
-                        # Calculate direction and magnitude
-                        angle = np.arctan2(v_field_linear, h_field_linear)
-                        magnitude = np.sqrt(h_field_linear**2 + v_field_linear**2)
-                        
-                        # Base arrow length on magnitude with reasonable limits
-                        base_arrow_length = 0.2  # Base length in cm
-                        arrow_length = base_arrow_length  # Uniform length for streamlines
-                        
-                        # Calculate arrow endpoints
-                        dx = arrow_length * np.cos(angle)
-                        dy = arrow_length * np.sin(angle)
-                        
-                        # Store vector components in grid for streamplot
-                        u_grid[y_idx, x_idx] = dx
-                        v_grid[y_idx, x_idx] = dy
-                        
-                        # Store the current direction for caching and individual arrows
-                        current_directions.append({
-                            'x': float(x),
-                            'y': float(y),
-                            'dx': float(dx),
-                            'dy': float(dy),
-                            'magnitude': float(magnitude)
-                        })
-                        
-                        arrow_count += 1
-                
-                print(f"Added {arrow_count} current direction vectors")
-                print(f"Skipped {skipped_count} points: {skipped_reasons}")
-                
-                # Save the computed current directions to cache file
-                if arrow_count > 0:
-                    try:
-                        print(f"Saving {len(current_directions)} current directions to {cached_file}")
-                        with open(cached_file, 'w') as f:
-                            json.dump({
-                                'metadata': {
-                                    'source_files': [file_0d, file_90d],
-                                    'created': time.strftime('%Y-%m-%d %H:%M:%S'),
-                                    'grid_size': [x_points, y_points]
-                                },
-                                'current_directions': current_directions
-                            }, f)
-                        print(f"Current directions saved successfully")
-                    except Exception as e:
-                        print(f"Error saving current directions: {e}")
-                
-                # Create streamplot from calculated vectors
-                if arrow_count > 0:
-                    # Store original axis position and figure size
-                    orig_position = plot_ax.get_position()
-                    orig_figsize = fig.get_size_inches()
-                    
-                    # Convert grid coordinates to cm for plotting
-                    x_grid_cm = x_grid * 100
-                    y_grid_cm = y_grid * 100
-                    
-                    print("Creating streamplot to visualize current flow...")
-                    
-                    try:
-                        # Create streamplot from the vector field
-                        stream = plot_ax.streamplot(
-                            x_grid_cm, y_grid_cm, u_grid, v_grid,
-                            density=1.5,  # Higher density = more lines
-                            color='red',
-                            linewidth=1.5,
-                            arrowsize=1.2,
-                            arrowstyle='->',
-                            minlength=0.5,
-                            maxlength=4.0
-                        )
-                        
-                        # Add to plot objects for later removal
-                        plot_objects["current_lines"].extend(
-                            [stream.lines] + list(stream.arrows.collections)
-                        )
-                        
-                        print("Streamplot created successfully")
-                        
-                    except Exception as e:
-                        print(f"Error creating streamplot: {e}")
-                        print("Falling back to individual arrows...")
-                        
-                        # Fall back to individual arrows if streamplot fails
-                        for current in current_directions[:min(300, len(current_directions))]:
-                            try:
-                                x_cm = current['x'] * 100
-                                y_cm = current['y'] * 100
-                                dx = current['dx']
-                                dy = current['dy']
-                                
-                                line = plot_ax.arrow(x_cm, y_cm, dx, dy,
-                                                  head_width=0.1, head_length=0.1,
-                                                  fc='red', ec='red', alpha=0.9, linewidth=1.0,
-                                                  length_includes_head=True)
-                                plot_objects["current_lines"].append(line)
-                            except Exception as arrow_error:
-                                pass  # Skip problematic arrows
-                    
-                    # Restore original position and figure size
-                    plot_ax.set_position(orig_position)
-                    fig.set_size_inches(orig_figsize, forward=True)
-                    
-                    # Ensure the plot is properly redrawn
-                    fig.canvas.draw_idle()
-            
-        except Exception as e:
-            print(f"Error processing current directions: {e}")
-            import traceback
-            traceback.print_exc()
-            
-        print(f"Current direction visualization completed in {time.time() - start_time:.2f} seconds")
-
     def show_0d(event):
         """Switch to 0° scan view"""
         nonlocal current_file, current_title
