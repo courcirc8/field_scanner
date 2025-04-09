@@ -197,21 +197,34 @@ def compute_current_direction(args):
     return x, y, dx, dy
 
 def show_currents(event):
-    """Display current directions using arrows or streamlines."""
-    print("Computing current directions...")
+    """Display current directions using arrows or streamlines and save intensity data.
+    
+    This function processes the measurements from different probe orientations to estimate
+    current directions on the PCB. The process works as follows:
+    
+    1. Loads data from three orientations: 0°, 90°, and optionally 45°
+    2. Converts field strength from dBm (logarithmic) to linear power units
+    3. Computes field orientation angles using the relative strength at different orientations
+    4. Calculates the total field intensity using the 0° and 90° measurements
+    5. Generates streamlines to visualize the current flow patterns
+    
+    The orientation angle calculation uses arctan2(B_90 - B_0, B_45) where:
+    - B_0: Field strength at 0° (linear scale)
+    - B_90: Field strength at 90° (linear scale)
+    - B_45: Field strength at 45° (linear scale)
+    
+    This approach leverages the fact that the magnetic field is perpendicular to
+    current flow, allowing us to estimate current directions from the field measurements.
+    The intensity of the field provides information about the relative current strength.
+    """
+    print("Computing current directions for all stored points...")
 
     # Access the figure and required file paths 
     try:
         fig = event.inaxes.figure
-        
-        # Get the main plot axes from the figure instead of the button's axes
         plot_ax = fig.main_plot_ax  # Use the stored reference to the main plot axes
         
         # Get file paths stored in the figure object
-        if not hasattr(fig, 'file_0d') or not hasattr(fig, 'file_90d'):
-            print("Error: Required file paths not found in figure object")
-            return
-            
         file_0d = fig.file_0d
         file_90d = fig.file_90d
         file_45d = fig.file_45d if hasattr(fig, 'file_45d') else None
@@ -221,7 +234,7 @@ def show_currents(event):
         print(f"  90° file: {file_90d}")
         print(f"  45° file: {file_45d if file_45d else 'Not available'}")
 
-        # Ensure the 0°, 45°, and 90° files are loaded
+        # Load data
         with open(file_0d, 'r') as f:
             data_0d = json.load(f)
         with open(file_90d, 'r') as f:
@@ -235,42 +248,134 @@ def show_currents(event):
         print(f"Error loading angle files: {e}")
         return
 
-    # Extract PCB size and resolution from metadata
-    metadata = data_0d.get("metadata", {})
-    pcb_size = metadata.get("PCB_SIZE", [1.0, 1.0])  # Default to 1x1 if missing
-    resolution = metadata.get("resolution", 30)  # Default resolution
+    # Extract results
+    results_0d = data_0d["results"]
+    results_90d = data_90d["results"]
+    results_45d = data_45d["results"] if data_45d else None
 
-    # Create a regular grid for x and y
-    x = np.linspace(0, pcb_size[0], resolution)
-    y = np.linspace(0, pcb_size[1], resolution)
-    X, Y = np.meshgrid(x, y)
+    # Compute angles and intensities for all points
+    results = []
+    for i, point_0d in enumerate(results_0d):
+        x = point_0d["x"]
+        y = point_0d["y"]
+        field_0_dBm = point_0d["field_strength"]
+        field_90_dBm = results_90d[i]["field_strength"]
+        field_45_dBm = results_45d[i]["field_strength"] if results_45d else 0
 
-    # Compute the field orientation at each grid point
-    U = np.zeros_like(X)  # Placeholder for x-component of current
-    V = np.zeros_like(Y)  # Placeholder for y-component of current
+        # Convert field strength from dBm to linear scale
+        # This is necessary because dBm is logarithmic, and we need linear values for vector calculations
+        field_0 = 10 ** (field_0_dBm / 10)
+        field_90 = 10 ** (field_90_dBm / 10) 
+        field_45 = 10 ** (field_45_dBm / 10)
 
-    for i in range(X.shape[0]):
-        for j in range(X.shape[1]):
-            # Get the field strength at this grid point for each angle
-            field_0 = data_0d["results"][i * resolution + j]["field_strength"]
-            field_90 = data_90d["results"][i * resolution + j]["field_strength"]
-            field_45 = data_45d["results"][i * resolution + j]["field_strength"] if data_45d else 0
+        # Compute the orientation of the field (angle estimation)
+        # The formula arctan2(B_90-B_0, B_45) estimates the field orientation
+        # based on the relative strength of the field measured at different probe angles
+        angle = np.arctan2(field_90 - field_0, field_45)
 
-            # Compute the orientation of the field (simplified example)
-            angle = np.arctan2(field_90 - field_0, field_45)
-            U[i, j] = np.cos(angle)
-            V[i, j] = np.sin(angle)
+        # Compute the field intensity using only 0° and 90°
+        # The intensity is calculated as the magnitude of the combined orthogonal components
+        intensity = np.sqrt(field_0**2 + field_90**2)
 
-    # Plot streamlines - using plot_ax instead of undefined ax
+        # Append results
+        results.append({
+            "x": x,
+            "y": y,
+            "field_strength": intensity,
+            "angle": angle
+        })
+
+    # Save intensity and angle data to _debug_intensity.json
+    debug_intensity_file = "debug_intensity.json"
+    debug_data = {
+        "metadata": data_0d.get("metadata", {}),
+        "results": results
+    }
+    with open(debug_intensity_file, 'w') as f:
+        json.dump(debug_data, f, indent=4)
+    print(f"Debug intensity and angle data saved to {debug_intensity_file}")
+
+    # Prepare data for visualization
+    x = [point["x"] for point in results]
+    y = [point["y"] for point in results]
+    intensity = [point["field_strength"] for point in results]
+    angle = [point["angle"] for point in results]
+
+    # Create a grid for visualization
+    unique_x = sorted(set(x))
+    unique_y = sorted(set(y))
+    X, Y = np.meshgrid(unique_x, unique_y)
+    Z_intensity = np.full((len(unique_y), len(unique_x)), np.nan)
+    U = np.full((len(unique_y), len(unique_x)), np.nan)
+    V = np.full((len(unique_y), len(unique_x)), np.nan)
+
+    for point in results:
+        xi = unique_x.index(point["x"])
+        yi = unique_y.index(point["y"])
+        Z_intensity[yi, xi] = point["field_strength"]
+        U[yi, xi] = np.cos(point["angle"])
+        V[yi, xi] = np.sin(point["angle"])
+
+    # Normalize the intensity for visualization
+    # This ensures that the streamline coloring and width are properly scaled
+    intensity_normalized = Z_intensity / np.nanmax(Z_intensity)
+
+    # Plot streamlines with intensity-based linewidth
     try:
-        # Convert grid spacing from meters to centimeters for plotting
         X_cm = X * 100
         Y_cm = Y * 100
-        stream = plot_ax.streamplot(X_cm, Y_cm, U, V, color='red', linewidth=0.8)
+        stream = plot_ax.streamplot(
+            X_cm, Y_cm, U, V,
+            color=intensity_normalized,  # Use field intensity to color the streamlines
+            linewidth=2 * intensity_normalized,  # Thicker lines indicate stronger currents
+            cmap='viridis',  # Color map for intensity visualization
+            density=2.0  # Higher density provides more detailed current flow patterns
+        )
+        plot_ax.set_xlim(min(x) * 100, max(x) * 100)
+        plot_ax.set_ylim(min(y) * 100, max(y) * 100)
         fig.canvas.draw_idle()
         print("Streamlines displayed.")
     except ValueError as e:
         print(f"Error processing current directions: {e}")
+
+def show_debug_intensity(event):
+    """Display the debug intensity data as a heatmap."""
+    debug_intensity_file = "debug_intensity.json"
+    if not os.path.exists(debug_intensity_file):
+        print(f"Debug intensity file not found: {debug_intensity_file}")
+        return
+
+    with open(debug_intensity_file, 'r') as f:
+        debug_data = json.load(f)
+
+    results = debug_data["results"]
+    x = [point["x"] for point in results]
+    y = [point["y"] for point in results]
+    field_strength = [point["field_strength"] for point in results]
+
+    # Create a grid for plotting
+    unique_x = sorted(set(x))
+    unique_y = sorted(set(y))
+    X, Y = np.meshgrid(unique_x, unique_y)
+    Z = np.full((len(unique_y), len(unique_x)), np.nan)
+
+    for point in results:
+        xi = unique_x.index(point["x"])
+        yi = unique_y.index(point["y"])
+        Z[yi, xi] = point["field_strength"]
+
+    # Access the plot_ax from the figure object
+    fig = event.inaxes.figure
+    plot_ax = fig.main_plot_ax
+
+    # Plot the intensity heatmap
+    plot_ax.clear()
+    plot_ax.contourf(X, Y, Z, cmap="viridis", levels=50)
+    plot_ax.set_title("Debug Intensity Heatmap")
+    plot_ax.set_xlabel("X (cm)")
+    plot_ax.set_ylabel("Y (cm)")
+    fig.canvas.draw_idle()
+    print("Debug intensity heatmap displayed.")
 
 def plot_with_selector(file_0d, file_90d, file_45d=None):
     """
@@ -354,6 +459,11 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
     
     # Add transparency slider on the left - moved down to avoid overlap
     slider_ax = plt.axes([buttons_left_pos, 0.15, button_width, 0.03])  # Moved down from 0.2 to 0.15
+    
+    # Add debug intensity button at the bottom left
+    button_debug_ax = plt.axes([0.05, 0.05, 0.12, 0.05])
+    button_debug = Button(button_debug_ax, 'Debug Intensity', color='orange')
+    button_debug.on_clicked(show_debug_intensity)
     
     # Create a dictionary to store plot objects
     plot_objects = {
