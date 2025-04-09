@@ -1,6 +1,6 @@
 import json
 import os
-from plot_utils import plot_with_selector, plot_field  # Correct import for plot_with_selector
+import numpy as np  # Import numpy for array operations
 import tkinter as tk  # Import tkinter for GUI dialogs
 
 def save_scan_results(filename, results, metadata=None):
@@ -66,15 +66,18 @@ def display_scan(file_name, pcb_image_path):
     if os.path.exists(file_0d) and os.path.exists(file_90d):
         # Both _0d and _90d files exist, use angle selector
         print(f"Debug: Found both _0d.json and _90d.json files: {file_0d}, {file_90d}")  # Debug message
-        plot_with_selector(file_0d, file_90d)
+        # Don't import plot_with_selector here - this will be called from scanner.py
+        return file_0d, file_90d, True  # Return the filenames and a flag indicating both files exist
     elif os.path.exists(file_name):
         # Use the provided file directly
         print(f"Debug: Using provided file: {file_name}")  # Debug message
-        plot_field(file_name, pcb_image_path)
+        # Don't import plot_field here - this will be called from scanner.py
+        return file_name, None, False  # Return the filename and a flag indicating only one file exists
     else:
         # Neither the provided file nor _0d/_90d files exist
         print(f"Error: File not found at path: {file_name}")  # Error message
         print(f"Debug: Neither {file_0d} nor {file_90d} exist.")  # Debug message
+        return None, None, False  # Return None and a flag indicating no files exist
 
 def get_user_choice(default_output_file):
     """Display a popup window to choose between displaying a previous scan or making a new scan."""

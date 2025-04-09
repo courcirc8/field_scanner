@@ -35,7 +35,7 @@ HORIZONTAL_FLIP = False  # Flip the PCB image horizontally
 SECOND_INPUT_FILE = "./scan_v1a_400MHz_Rx_module2_nores_patched.json"
 SECOND_PCB_IMAGE_PATH = "./pcb_die.jpg"
 
-def plot_field(input_file, pcb_image_path, save_path=None, ax=None):
+def plot_field(input_file, pcb_image_path, save_path=None, ax=None, vmin=None, vmax=None):
     """Plot the EM field strength from the scan results with PCB overlay and transparency adjustment."""
     try:
         print(f"Loading scan results from: {input_file}")  # Debug message
@@ -137,9 +137,14 @@ def plot_field(input_file, pcb_image_path, save_path=None, ax=None):
             extent=[grid_x[0], grid_x[-1], grid_y[0], grid_y[-1]],  # Scale to interpolated grid dimensions
             origin="lower",  # Ensure the origin matches the PCB image
             cmap="plasma",  # Updated colormap to 'plasma' for a larger color range
-            alpha=0.65  # Initial transparency
+            alpha=0.65,  # Initial transparency
+            vmin=vmin,  # Use provided vmin if available
+            vmax=vmax   # Use provided vmax if available
         )
-        plt.colorbar(heatmap, ax=ax, label="Field Strength (dBm)")
+        
+        # Only create colorbar if axis is None or no vmin/vmax provided
+        if ax is None or (vmin is None and vmax is None):
+            plt.colorbar(heatmap, ax=ax, label="Field Strength (dBm)")
 
         ax.set_xlabel("X (cm)")
         ax.set_ylabel("Y (cm)")
@@ -191,6 +196,10 @@ def plot_field(input_file, pcb_image_path, save_path=None, ax=None):
             plt.show(block=True)  # Ensure the plot remains open until the user closes it
             print("Plot closed.")  # Debug message
 
+        # Return the plot objects if axis is provided
+        if ax is not None:
+            return {'pcb_overlay': pcb_overlay, 'heatmap': heatmap}
+
     except FileNotFoundError:
         print(f"Error: File not found at path: {input_file}")  # Updated error message
     except json.JSONDecodeError:
@@ -200,6 +209,7 @@ def plot_field(input_file, pcb_image_path, save_path=None, ax=None):
     finally:
         if ax is None:
             plt.close('all')  # Ensure all plots are closed
+        return None  # Return None if there was an error
 
 def compare_fields(input_file1, pcb_image1, input_file2, pcb_image2):
     """Compare two measurements side by side with the same scale."""

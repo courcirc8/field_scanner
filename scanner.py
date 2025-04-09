@@ -9,7 +9,13 @@ if __name__ == "__main__":
     choice, file_name = get_user_choice(OUTPUT_FILE)
     
     if choice == "display":
-        display_scan(file_name, PCB_IMAGE_PATH)
+        file_to_display, second_file, has_both = display_scan(file_name, PCB_IMAGE_PATH)
+        if has_both:
+            # If both _0d and _90d files exist, use the angle selector
+            plot_with_selector(file_to_display, second_file)
+        elif file_to_display:
+            # If only one file exists, display it directly
+            plot_field(file_to_display, PCB_IMAGE_PATH)
     elif choice == "scan":
         scan_field(file_name)
     else:
