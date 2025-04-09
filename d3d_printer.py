@@ -18,154 +18,233 @@ Missing Features:
 
 import socket
 import time
+import getpass
+import os
+from config import DEFAULT_Z, DEBUG_ALL  # Import DEBUG_ALL
 
 class PrinterConnection:
-    FAST_Z_MOVE = 100  # Fast Z move height in mm
-    NOZZLE_HEIGHT = 3  # Nozzle height in mm for calibration
-
-    def __init__(self, ip, port=23, password_file="password.txt"):
+    """Class to handle 3D printer connection and control."""
+    
+    def __init__(self, ip, port, password=None):
         """
-        Initialize the PrinterConnection object.
-
-        :param ip: IP address of the 3D printer.
-        :param port: Port for Telnet communication (default: 23).
-        :param password_file: Path to the file containing the printer password.
+        Initialize the printer connection with the given IP, port, and optional password.
+        
+        Args:
+            ip: IP address of the printer
+            port: Port number (usually 23 for Telnet)
+            password: Optional password for authentication, if None will try to read from password.txt
         """
         self.ip = ip
         self.port = port
+        self.password = password
+        # Try to load password from file if not provided
+        if self.password is None:
+            self.password = self._read_password_from_file()
         self.socket = None
-        self.password = self._load_password(password_file)
-
-    def _load_password(self, password_file):
-        """Load the password from a file."""
+        self.timeout = 5  # Socket timeout in seconds
+        self.authenticated = False
+        print(f"DEBUG: Initializing PrinterConnection with IP={ip}, PORT={port}")
+    
+    def _read_password_from_file(self):
+        """Read printer password from password.txt file."""
+        password_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "password.txt")
         try:
-            with open(password_file, "r") as file:
-                return file.read().strip()
-        except Exception as e:
-            print(f"Error loading password from {password_file}: {e}")
-            return None
-
-    def connect(self):
-        """Establish a Telnet connection to the 3D printer and send the password."""
-        if not self.password:
-            print("Password not loaded. Cannot connect to the printer.")
-            return
-        try:
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.connect((self.ip, self.port))
-            print(f"Connected to 3D printer at {self.ip}:{self.port}")
-
-            # Wait for the password prompt
-            response = self.socket.recv(1024).decode()
-            print(f"Received: {response.strip()}")
-
-            if "Please enter your password:" in response:
-                # Send the password
-                self.socket.sendall((self.password + "\n").encode())
-                response = self.socket.recv(1024).decode()
-                print(f"Sent password, Received: {response.strip()}")
-
-                if "log in successful" in response.lower() or "ok" in response.lower():
-                    print("Password accepted. Connection established.")
-                else:
-                    raise ValueError("Failed to authenticate with the printer. Check the password.")
+            if os.path.exists(password_file):
+                with open(password_file, 'r') as f:
+                    password = f.read().strip()
+                print("DEBUG: Successfully read password from password.txt")
+                return password
             else:
-                raise ValueError("Unexpected response from the printer. Authentication failed.")
+                print("WARNING: password.txt not found, will prompt for password if needed")
+                return None
         except Exception as e:
-            print(f"Failed to connect to 3D printer: {e}")
-            self.socket = None
-
-    def disconnect(self):
-        """Close the Telnet connection to the 3D printer."""
-        if self.socket:
-            try:
-                # Optional: Home all axes before disconnecting
-                print("Homing all axes before disconnecting...")
-                self.send_gcode("G28")  # G28 is the G-code for homing all axes
-
-                # Turn off the motors
-                print("Turning off motors...")
-                self.send_gcode("M84")  # M84 is the G-code to disable motors
-            except Exception as e:
-                print(f"Error during disconnect: {e}")
-            finally:
-                # Close the connection
-                self.socket.close()
-                print("Disconnected from 3D printer.")
-                self.socket = None
-
-    def send_gcode(self, command):
+            print(f"ERROR: Failed to read password from file: {e}")
+            return None
+    
+    def connect(self):
         """
-        Send a G-code command to the 3D printer.
-
-        :param command: G-code command as a string.
-        :return: Response from the printer.
+        Connect to the 3D printer via Telnet and handle authentication.
+        
+        Returns:
+            bool: True if connection and authentication succeeded, False otherwise
+        """
+        try:
+            print(f"DEBUG: Attempting to connect to printer at {self.ip}:{self.port}")
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.settimeout(self.timeout)
+            self.socket.connect((self.ip, self.port))
+            
+            # Wait for initial welcome message
+            response = self.socket.recv(1024).decode('utf-8', errors='ignore')
+            print(f"DEBUG: Received initial response: {response}")
+            
+            # Check if password authentication is required
+            if "password" in response.lower():
+                # If no password was provided during initialization, prompt the user
+                if self.password is None:
+                    self.password = getpass.getpass("Please enter the printer password: ")
+                
+                # Send the password
+                print("DEBUG: Sending password")
+                self.socket.sendall(f"{self.password}\n".encode())
+                
+                # Wait for response after password attempt
+                time.sleep(0.5)
+                response = self.socket.recv(1024).decode('utf-8', errors='ignore')
+                print(f"DEBUG: Authentication response: {response}")
+                
+                # Check if authentication succeeded
+                if "invalid password" in response.lower():
+                    print("ERROR: Authentication failed - Invalid password")
+                    self.authenticated = False
+                    self.socket.close()
+                    self.socket = None
+                    return False
+                else:
+                    print("DEBUG: Authentication successful")
+                    self.authenticated = True
+            else:
+                # No password required
+                self.authenticated = True
+            
+            # Send a test command to verify connection
+            print("DEBUG: Sending test command (M115)")
+            test_response = self.send_gcode("M115")
+            
+            if test_response and "invalid password" not in test_response.lower():
+                print("DEBUG: Successfully connected and authenticated to printer")
+                return True
+            else:
+                print("ERROR: Failed to verify connection with test command")
+                self.socket.close()
+                self.socket = None
+                self.authenticated = False
+                return False
+                
+        except socket.timeout:
+            print(f"ERROR: Connection timed out to {self.ip}:{self.port}")
+            self.socket = None
+            return False
+        except ConnectionRefusedError:
+            print(f"ERROR: Connection refused to {self.ip}:{self.port}. Make sure the printer is on and Telnet is enabled.")
+            self.socket = None
+            return False
+        except Exception as e:
+            print(f"ERROR: Failed to connect to printer: {e}")
+            self.socket = None
+            return False
+    
+    def send_gcode(self, command, debug=True):
+        """
+        Send a G-code command to the printer and return the response.
+        
+        Args:
+            command: G-code command string
+            debug: Whether to print debug messages
+            
+        Returns:
+            str: Response from the printer, or None if there was an error
         """
         if not self.socket:
-            print("Printer is not connected.")
+            print("ERROR: Not connected to printer. Use connect() first.")
             return None
+        
+        if not self.authenticated:
+            print("ERROR: Not authenticated to printer. Authentication failed during connect.")
+            return None
+        
         try:
-            self.socket.sendall((command + "\n").encode())  # Send the G-code command
-            response = self.socket.recv(1024).decode()  # Wait for the printer's response
-            print(f"Sent: {command}, Received: {response.strip()}")
-            return response.strip()
+            if debug:
+                print(f"DEBUG: Sending G-code: {command}")
+            self.socket.sendall(f"{command}\n".encode())
+            time.sleep(0.1)  # Short delay to ensure response is complete
+            response = self.socket.recv(1024).decode('utf-8', errors='ignore')
+            if debug:
+                print(f"DEBUG: Received response: {response}")
+            
+            # Check if we're still getting authentication errors
+            if "invalid password" in response.lower():
+                print("WARNING: Command rejected - authentication issue")
+                self.authenticated = False
+                
+            return response
         except Exception as e:
-            print(f"Error sending G-code command: {e}")
+            print(f"ERROR: Failed to send command: {e}")
             return None
-
-    def initialize_printer(self):
-        """
-        Initialize the 3D printer by turning on the motors, homing all axes, 
-        and calibrating the Z-axis using a magnetic probe.
-
-        :return: Response from the printer.
-        """
-        print("Initializing printer (turning on motors, homing all axes, and calibrating Z-axis)...")
-        
-        # Turn on the motors
-        response_m80 = self.send_gcode("M80")  # M80 is the G-code to turn on motors
-        if response_m80:
-            print(f"Motors turned on: {response_m80}")
-        
-        # Home all axes
-        response_g28 = self.send_gcode("G28")  # G28 is the G-code for homing all axes
-        if response_g28:
-            print(f"Axes homed: {response_g28}")
-        
-        # Fast move close to the bottom
-        response_fast_z = self.send_gcode(f"G1 Z{self.FAST_Z_MOVE} F3000")
-        if response_fast_z:
-            print(f"Fast Z move response: {response_fast_z}")
-        
-        # Calibrate Z-axis using magnetic probe
-        #response_g30 = self.send_gcode("G30")  # Removed Z parameter for compatibility
-        #if response_g30:
-        #    print(f"Z-axis calibration response: {response_g30}")
-        
-        return response_fast_z
-
-    def move_probe(self, x, y, z=None, feedrate=3000):
-        """
-        Move the probe to a specific (X, Y, Z) position and wait for the movement to complete.
-
-        :param x: X-coordinate in mm.
-        :param y: Y-coordinate in mm.
-        :param z: Z-coordinate in mm (optional).
-        :param feedrate: Movement speed in mm/min (default: 3000).
-        :return: Response from the printer after ensuring the movement is complete.
-        """
-        gcode_command = f"G1 X{x:.3f} Y{y:.3f}"
+    
+    def move_probe(self, x=None, y=None, z=None, feedrate=3000, debug=True):
+        """Move the probe to the specified coordinates."""
+        command = "G1"
+        if x is not None:
+            command += f" X{x:.3f}"
+        if y is not None:
+            command += f" Y{y:.3f}"
         if z is not None:
-            gcode_command += f" Z{z:.3f}"
-        gcode_command += f" F{feedrate}"
+            command += f" Z{z:.3f}"
+        command += f" F{feedrate}"
         
-        # Send the movement command
-        response = self.send_gcode(gcode_command)
+        if debug:
+            print(f"DEBUG: Moving probe to: X={x}, Y={y}, Z={z}, F={feedrate}")
+        return self.send_gcode(command, debug=debug)
+    
+    def initialize_printer(self):
+        """Initialize the printer (home axes, set units, etc.)."""
+        if not self.socket:
+            print("ERROR: Not connected to printer. Use connect() first.")
+            return False
         
-        # Ensure the movement is complete
-        self.send_gcode("M400")  # Wait for all movements to finish
-        
-        return response
+        try:
+            # Turn on power supply first
+            print("DEBUG: Turning on power supply")
+            self.send_gcode("M80")
+            time.sleep(1)  # Wait a moment for power to stabilize
+            
+            # Set to absolute positioning mode
+            print("DEBUG: Setting absolute positioning mode")
+            self.send_gcode("G90")
+            
+            # Home all axes
+            print("DEBUG: Homing all axes")
+            self.send_gcode("G28")
+            
+            # Set units to millimeters
+            print("DEBUG: Setting units to millimeters")
+            self.send_gcode("G21")
+            
+            # Wait for all moves to complete
+            print("DEBUG: Waiting for moves to complete")
+            self.send_gcode("M400")
+            
+            # Move to default Z height - ensure this is executed
+            z_height = DEFAULT_Z  # Get Z height from config
+            print(f"DEBUG: Moving to default Z height: {z_height} mm")
+            # Use explicit G1 command to set Z height
+            self.send_gcode(f"G1 Z{z_height} F3000")
+            # Wait for move to complete
+            self.send_gcode("M400")
+            print(f"DEBUG: Z-height set to {z_height} mm")
+            
+            print("DEBUG: Printer initialization completed successfully")
+            return True
+        except Exception as e:
+            print(f"ERROR: Failed to initialize printer: {e}")
+            return False
+    
+    def disconnect(self):
+        """Disconnect from the printer."""
+        if self.socket:
+            try:
+                print("DEBUG: Turning off power supply")
+                self.send_gcode("M81")  # Turn off power supply before disconnecting
+                time.sleep(0.5)  # Give the command time to complete
+                
+                print("DEBUG: Disconnecting from printer")
+                self.socket.close()
+                print("DEBUG: Successfully disconnected from printer")
+            except Exception as e:
+                print(f"ERROR: Error disconnecting from printer: {e}")
+            finally:
+                self.socket = None
 
 if __name__ == "__main__":
     # IP address and port configuration for standalone testing
@@ -176,17 +255,15 @@ if __name__ == "__main__":
     printer = PrinterConnection(PRINTER_IP, PRINTER_PORT)
 
     # Connect to the printer
-    printer.connect()
+    if printer.connect():
+        # Test printer initialization (homing all axes and calibrating Z-axis)
+        if printer.initialize_printer():
+            print("Printer initialized successfully.")
 
-    # Test printer initialization (homing all axes and calibrating Z-axis)
-    response = printer.initialize_printer()
-    if response:
-        print(f"Printer initialization response: {response}")
+        # Test moving the probe to a specific position
+        response = printer.move_probe(x=10, y=20, z=5, feedrate=3000)
+        if response:
+            print(f"Move probe response: {response}")
 
-    # Test moving the probe to a specific position
-    response = printer.move_probe(x=10, y=20, z=5, feedrate=3000)
-    if response:
-        print(f"Move probe response: {response}")
-
-    # Disconnect from the printer
-    printer.disconnect()
+        # Disconnect from the printer
+        printer.disconnect()

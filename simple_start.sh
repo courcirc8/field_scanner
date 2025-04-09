@@ -6,24 +6,15 @@ set -x  # Print each command before executing it
 
 # Define the Ethernet interface and IP address
 INTERFACE="enp2s0"
-IP_ADDRESS="192.168.1.2/24"
+IP_ADDRESS="192.168.2.1"
 
-# Add the IP address to the interface
-if ip addr add "$IP_ADDRESS" dev "$INTERFACE"; then
-    echo "Successfully assigned IP address $IP_ADDRESS to $INTERFACE."
+# Remove any existing IP addresses on the interface
+ip addr flush dev "$INTERFACE"
+
+# Add the new IP address to the interface
+if ip addr add "$IP_ADDRESS/24" dev "$INTERFACE"; then
+    echo "IP address $IP_ADDRESS added to $INTERFACE"
 else
-    echo "Failed to assign IP address. Please check the interface name and IP address."
+    echo "Failed to add IP address $IP_ADDRESS to $INTERFACE"
     exit 1
 fi
-
-# Bring the interface up
-if ip link set "$INTERFACE" up; then
-    echo "Successfully brought up the interface $INTERFACE."
-else
-    echo "Failed to bring up the interface. Please check the interface name."
-    exit 1
-fi
-
-# Display the interface status for verification
-ip addr show "$INTERFACE"
-

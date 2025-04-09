@@ -37,24 +37,18 @@ def save_scan_results(filename, results, metadata=None):
     except Exception as e:
         print(f"Error saving scan results to {filename}: {e}")
 
-def combine_scans(file_0d, file_90d):
+def combine_scans(file_0d, file_90d, file_45d=None):
     """
-    Combine two perpendicular scans to create a more complete field map.
+    Combine perpendicular scans to create a more complete field map.
     
     This function implements the mathematical combination of orthogonal field 
-    components. It:
-    1. Loads both 0° and 90° scan data
-    2. Converts field strength from dBm to linear power
-    3. Combines values using sqrt(x²+y²) for amplitude
-    4. Converts back to dBm for consistent visualization
-    
-    This is important for creating a complete picture of the field, particularly
-    with linearly polarized antennas that might miss components not aligned with
-    the antenna orientation.
+    components, using only the 0° and 90° measurements for magnitude computation:
+    sqrt(power_0d² + power_90d²)
     
     Args:
         file_0d: Path to 0° orientation scan results
         file_90d: Path to 90° orientation scan results
+        file_45d: Optional path to 45° orientation scan results (not used in calculation)
         
     Returns:
         Dictionary with combined scan data ready for saving or visualization
@@ -63,12 +57,19 @@ def combine_scans(file_0d, file_90d):
         data_0d = json.load(f)
     with open(file_90d, 'r') as f:
         data_90d = json.load(f)
-        
-    # Convert dBm to linear power
-    power_0d = np.power(10, np.array([p["field_strength"] for p in data_0d["results"]]) / 10)
-    power_90d = np.power(10, np.array([p["field_strength"] for p in data_90d["results"]]) / 10)
     
-    # Calculate combined power
+    # Check for results key in the data structure
+    results_0d = data_0d["results"] if isinstance(data_0d, dict) and "results" in data_0d else data_0d
+    results_90d = data_90d["results"] if isinstance(data_90d, dict) and "results" in data_90d else data_90d
+    
+    # Extract metadata from the first file
+    metadata = data_0d.get("metadata", {}) if isinstance(data_0d, dict) else {}
+    
+    # Convert dBm to linear power
+    power_0d = np.power(10, np.array([p["field_strength"] for p in results_0d]) / 10)
+    power_90d = np.power(10, np.array([p["field_strength"] for p in results_90d]) / 10)
+    
+    # Calculate combined power using only 0° and 90° components
     power_combined = np.sqrt(np.power(power_0d, 2) + np.power(power_90d, 2))
     
     # Convert back to dBm
@@ -76,14 +77,14 @@ def combine_scans(file_0d, file_90d):
     
     # Create combined results
     combined_results = []
-    for i, point in enumerate(data_0d["results"]):
+    for i, point in enumerate(results_0d):
         combined_results.append({
             "x": point["x"],
             "y": point["y"],
             "field_strength": float(combined_dbm[i])
         })
     
-    return {"metadata": data_0d["metadata"], "results": combined_results}
+    return {"metadata": metadata, "results": combined_results}
 
 def display_scan(file_name, pcb_image_path):
     """
@@ -93,14 +94,14 @@ def display_scan(file_name, pcb_image_path):
     1. A single scan file directly
     2. Multiple orientation scans with a selector interface
     
-    It also provides helpful debug information about file paths and availability.
+    It checks for 0°, 90°, and 45° scan files.
     
     Args:
         file_name: Base path for scan results
         pcb_image_path: Path to the PCB image overlay
         
     Returns:
-        Tuple of (primary_file, secondary_file, has_both_orientations)
+        Tuple of (primary_file, secondary_file, tertiary_file, has_multiple_orientations)
     """
     print(f"Debug: Entered display_scan with file_name: {file_name}")  # Debug message
 
@@ -108,25 +109,30 @@ def display_scan(file_name, pcb_image_path):
     base_name = file_name.rsplit('.json', 1)[0]
     file_0d = base_name + '_0d.json'
     file_90d = base_name + '_90d.json'
+    file_45d = base_name + '_45d.json'  # Add check for 45° file
 
     print(f"Debug: Checking for _0d.json file: {file_0d}")  # Debug message
     print(f"Debug: Checking for _90d.json file: {file_90d}")  # Debug message
+    print(f"Debug: Checking for _45d.json file: {file_45d}")  # Debug message
 
-    if os.path.exists(file_0d) and os.path.exists(file_90d):
-        # Both _0d and _90d files exist, use angle selector
-        print(f"Debug: Found both _0d.json and _90d.json files: {file_0d}, {file_90d}")  # Debug message
-        # Don't import plot_with_selector here - this will be called from scanner.py
-        return file_0d, file_90d, True  # Return the filenames and a flag indicating both files exist
+    # Check if all orientation files exist
+    has_0d = os.path.exists(file_0d)
+    has_90d = os.path.exists(file_90d)
+    has_45d = os.path.exists(file_45d)
+    
+    if has_0d and has_90d:
+        # Return all available orientation files
+        print(f"Debug: Found multiple orientation files")
+        return file_0d, file_90d, file_45d if has_45d else None, True
     elif os.path.exists(file_name):
         # Use the provided file directly
-        print(f"Debug: Using provided file: {file_name}")  # Debug message
-        # Don't import plot_field here - this will be called from scanner.py
-        return file_name, None, False  # Return the filename and a flag indicating only one file exists
+        print(f"Debug: Using provided file: {file_name}")
+        return file_name, None, None, False
     else:
-        # Neither the provided file nor _0d/_90d files exist
-        print(f"Error: File not found at path: {file_name}")  # Error message
-        print(f"Debug: Neither {file_0d} nor {file_90d} exist.")  # Debug message
-        return None, None, False  # Return None and a flag indicating no files exist
+        # No files exist
+        print(f"Error: File not found at path: {file_name}")
+        print(f"Debug: Neither {file_0d} nor {file_90d} exist.")
+        return None, None, None, False
 
 def get_user_choice(default_output_file):
     """
@@ -196,23 +202,56 @@ def get_user_choice(default_output_file):
 
 def show_rotate_probe_dialog():
     """
-    Show a dialog asking the user to rotate the probe by 90 degrees.
-    
-    This function is called between the 0° and 90° scans to instruct
-    the user to physically rotate the probe. The workflow pauses until
-    the user confirms the rotation is complete.
+    Show a dialog asking the user to rotate the probe to 90 degrees.
     """
     root = tk.Tk()
     root.title("Rotate Probe")
-    root.geometry("400x200")
+    root.geometry("600x300")  # Increased window size for better text display
 
-    label = tk.Label(root, text="Please rotate the probe by 90° and press Done.", font=("Helvetica", 12))
-    label.pack(pady=30)
+    label = tk.Label(root, text="Please rotate the probe to 90° angle position and press Done.", 
+                    font=("Helvetica", 14))  # Increased font size
+    label.pack(pady=50)  # More vertical padding
 
     def on_done():
         root.destroy()
 
-    button = tk.Button(root, text="Done", command=on_done, font=("Helvetica", 12))
-    button.pack()
+    button = tk.Button(root, text="Done", command=on_done, font=("Helvetica", 14))  # Larger button
+    button.pack(pady=20)
+
+    # Center the window on screen
+    root.update_idletasks()
+    width = root.winfo_width()
+    height = root.winfo_height()
+    x = (root.winfo_screenwidth() // 2) - (width // 2)
+    y = (root.winfo_screenheight() // 2) - (height // 2)
+    root.geometry(f'{width}x{height}+{x}+{y}')
+
+    root.mainloop()
+
+def show_rotate_probe_dialog_45():
+    """
+    Show a dialog asking the user to rotate the probe to 45 degrees.
+    """
+    root = tk.Tk()
+    root.title("Rotate Probe to 45°")
+    root.geometry("600x300")  # Increased window size for better text display
+
+    label = tk.Label(root, text="Please rotate the probe to 45° angle position and press Done.", 
+                    font=("Helvetica", 14))  # Increased font size
+    label.pack(pady=50)  # More vertical padding
+
+    def on_done():
+        root.destroy()
+
+    button = tk.Button(root, text="Done", command=on_done, font=("Helvetica", 14))  # Larger button
+    button.pack(pady=20)
+
+    # Center the window on screen
+    root.update_idletasks()
+    width = root.winfo_width()
+    height = root.winfo_height()
+    x = (root.winfo_screenwidth() // 2) - (width // 2)
+    y = (root.winfo_screenheight() // 2) - (height // 2)
+    root.geometry(f'{width}x{height}+{x}+{y}')
 
     root.mainloop()

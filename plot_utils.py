@@ -32,6 +32,7 @@ def initialize_plot():
     ax.set_xlabel("X (cm)")
     ax.set_ylabel("Y (cm)")
     ax.set_title("EM Field Strength (Interactive)")
+    fig.canvas.manager.set_window_title("Measuring board - real-time scan view")  # Set a more meaningful window title
     ax.set_aspect('equal', adjustable='box')
 
     # Create an empty 2D array for the initial contour plot
@@ -46,17 +47,6 @@ def update_plot(ax, contour, colorbar, results, x_values, y_values):
     """
     Update the plot with new data during the scanning process.
     This function is called after each row is scanned to provide real-time visualization.
-    
-    Args:
-        ax: The matplotlib axis to plot on
-        contour: The existing contour plot to update
-        colorbar: The colorbar to update
-        results: List of measurement points with field strengths
-        x_values: List of x coordinate values
-        y_values: List of y coordinate values
-        
-    Returns:
-        Updated contour plot object
     """
     x = [point["x"] for point in results]
     y = [point["y"] for point in results]
@@ -64,30 +54,68 @@ def update_plot(ax, contour, colorbar, results, x_values, y_values):
 
     unique_x = sorted(set(x_values))
     unique_y = sorted(set(y_values))
-    X, Y = plt.meshgrid(unique_x, unique_y)
-    Z = [[None for _ in unique_x] for _ in unique_y]
-
-    for point in results:
-        xi = unique_x.index(point["x"])
-        yi = unique_y.index(point["y"])
-        Z[yi][xi] = point["field_strength"]
-
+    
+    # Check if we have more than one unique y-value (2D data)
+    is_2d_data = len(unique_y) > 1
+    
+    # Clear previous plot elements
     for artist in ax.collections:
         artist.remove()
+        
+    if is_2d_data:
+        # For 2D data, use meshgrid and contourf as before
+        X, Y = np.meshgrid(unique_x, unique_y)  # Use np.meshgrid instead of plt.meshgrid
+        Z = np.full((len(unique_y), len(unique_x)), np.nan)  # Initialize with NaN values
 
-    contour = ax.contourf(X, Y, Z, cmap="viridis", levels=50, alpha=0.35)
-    colorbar.update_normal(contour)
+        for point in results:
+            xi = unique_x.index(point["x"])
+            yi = unique_y.index(point["y"])
+            if point["field_strength"] is not None:  # Check for None values
+                Z[yi][xi] = point["field_strength"]
+
+        try:
+            # Only create contour plot if we have valid data
+            if not np.all(np.isnan(Z)):
+                contour = ax.contourf(X, Y, Z, cmap="viridis", levels=50, alpha=0.35)
+                # Update colorbar if we have a valid contour
+                if hasattr(colorbar, 'update_normal'):
+                    colorbar.update_normal(contour)
+        except Exception as e:
+            print(f"Warning: Could not create contour plot: {e}")
+            # Fallback to scatter plot if contour fails
+            valid_points = [(x[i], y[i], field_strength[i]) for i in range(len(x)) if field_strength[i] is not None]
+            if valid_points:
+                x_valid, y_valid, fs_valid = zip(*valid_points)
+                contour = ax.scatter(x_valid, y_valid, c=fs_valid, cmap="viridis", alpha=0.8)
+    else:
+        # For 1D data (only one y-value), use a line plot
+        sorted_data = sorted([(p["x"], p["field_strength"]) for p in results if p["field_strength"] is not None])
+        if sorted_data:  # Only proceed if we have valid data
+            x_sorted = [point[0] for point in sorted_data]
+            field_sorted = [point[1] for point in sorted_data]
+            
+            # Plot as a line
+            if hasattr(contour, 'remove'):
+                contour.remove()  # Remove previous line
+            contour = ax.plot(x_sorted, field_sorted, 'o-', color='blue', linewidth=2, alpha=0.8)[0]
+            
+            # Set y-axis limits with a buffer
+            if field_sorted:  # Only set limits if we have data
+                y_min = min(field_sorted) - 5
+                y_max = max(field_sorted) + 5
+                ax.set_ylim(y_min, y_max)
+    
     ax.set_xlabel("X (cm)")
-    ax.set_ylabel("Y (cm)")
+    ax.set_ylabel("Y (cm)" if is_2d_data else "Field Strength (dBm)")
     ax.set_title("EM Field Strength (Interactive)")
-    ax.set_aspect('equal', adjustable='box')
+    ax.set_aspect('auto')  # Changed from 'equal' to 'auto' for better display of 1D data
     plt.pause(0.1)
 
     return contour
 
-def plot_with_selector(file_0d, file_90d):
+def plot_with_selector(file_0d, file_90d, file_45d=None):
     """
-    Plot results with angle selector for switching between 0°, 90°, and combined views.
+    Plot results with angle selector for switching between 0°, 90°, 45°, and combined views.
     
     This function creates an integrated UI with:
     - A control panel on the left for selecting scan orientation
@@ -103,6 +131,7 @@ def plot_with_selector(file_0d, file_90d):
     Args:
         file_0d: Path to the 0° scan results file
         file_90d: Path to the 90° scan results file
+        file_45d: Optional path to the 45° scan results file
     """
     # Load data files
     with open(file_0d, 'r') as f:
@@ -110,10 +139,16 @@ def plot_with_selector(file_0d, file_90d):
     with open(file_90d, 'r') as f:
         data_90d = json.load(f)
     
+    # Load 45° data if available
+    data_45d = None
+    if file_45d and os.path.exists(file_45d):
+        with open(file_45d, 'r') as f:
+            data_45d = json.load(f)
+    
     # Create combined data
     combined_file = file_0d.replace('_0d.json', '_combined.json')
     if not os.path.exists(combined_file):
-        data_combined = combine_scans(file_0d, file_90d)
+        data_combined = combine_scans(file_0d, file_90d, file_45d)
         with open(combined_file, 'w') as f:
             json.dump(data_combined, f)
     else:
@@ -135,7 +170,12 @@ def plot_with_selector(file_0d, file_90d):
     # Get global min/max for consistent colormap
     all_field_strengths = []
     for dataset in [data_0d, data_90d, data_combined]:
-        all_field_strengths.extend([point["field_strength"] for point in dataset["results"]])
+        if dataset:
+            all_field_strengths.extend([point["field_strength"] for point in dataset["results"]])
+    # Add 45° data if available
+    if data_45d:
+        all_field_strengths.extend([point["field_strength"] for point in data_45d["results"]])
+    
     vmin = min(all_field_strengths)
     vmax = max(all_field_strengths)
     
@@ -276,6 +316,11 @@ def plot_with_selector(file_0d, file_90d):
     
     tk.Button(button_frame, text="90° Scan", font=("Helvetica", 12),
               command=lambda: [current_file.set(file_90d), current_title.set("90° Scan"), update_plot()]).pack(pady=5, fill=tk.X)
+    
+    # Add 45° button if data is available
+    if file_45d and os.path.exists(file_45d):
+        tk.Button(button_frame, text="45° Scan", font=("Helvetica", 12),
+                  command=lambda: [current_file.set(file_45d), current_title.set("45° Scan"), update_plot()]).pack(pady=5, fill=tk.X)
     
     tk.Button(button_frame, text="Combined Scan", font=("Helvetica", 12),
               command=lambda: [current_file.set(combined_file), current_title.set("Combined Scan"), update_plot()]).pack(pady=5, fill=tk.X)

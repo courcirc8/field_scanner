@@ -9,7 +9,9 @@ import tkinter as tk
 import threading
 import time
 import numpy as np
+import uhd  # Add uhd import here
 from radio_utils import get_power_dBm
+from config import RX_GAIN, DEFAULT_Z  # Import RX_GAIN and DEFAULT_Z from config
 
 def send_gcode_command(command, printer_socket):
     """
@@ -58,7 +60,7 @@ def adjust_head(printer, usrp, streamer):
     # Initialize the offsets
     x_offset = 0.0  # X-axis offset in mm
     y_offset = 0.0  # Y-axis offset in mm
-    z_height = 97.3  # Start at the initial probing height
+    z_height = DEFAULT_Z  # Use the default Z height from config.py instead of hardcoded value
     z_lift = 1  # Use the defined lift height
     pcb_corners = {
         "Upper Left": (0, 15.3),
@@ -87,28 +89,81 @@ def adjust_head(printer, usrp, streamer):
     def measure_power():
         """Measure the radio power and update the label in a thread-safe way."""
         while not done:
-            if False:  # Simulate USRP
-                power = np.random.uniform(-70, -50)  # Simulated power in dBm
-            else:
-                try:
-                    power = get_power_dBm(usrp, streamer, 76, 100, 400e6, 10e6)
-                except Exception as e:
-                    print(f"Error measuring field strength: {e}")
-                    power = None
-
-            if not done:
-                if power is not None:
-                    root.after(0, lambda: power_label.config(text=f"Power: {power:.2f} dBm"))  # Thread-safe update
+            try:
+                # Store measurements locally first
+                local_power = None
+                
+                # Only continue if not done to prevent accessing closed resources
+                if done:
+                    break
+                
+                if False:  # Simulate USRP
+                    local_power = np.random.uniform(-70, -50)  # Simulated power in dBm
                 else:
-                    root.after(0, lambda: power_label.config(text="Power: Measurement Failed"))  # Handle None case
-            time.sleep(1)  # Update every second
-
+                    # First make sure we're issuing a stream command
+                    stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.num_done)
+                    stream_cmd.num_samps = 1024
+                    stream_cmd.stream_now = True
+                    streamer.issue_stream_cmd(stream_cmd)
+                    
+                    # Then measure power
+                    local_power = get_power_dBm(streamer, RX_GAIN)
+                    
+                    # Debug output for successful measurement
+                    if local_power is not None and not np.isnan(local_power):
+                        print(f"DEBUG: Measured power: {local_power:.2f} dBm")
+                
+                # IMPORTANT: Check if 'done' before updating UI to prevent crashes
+                # This is critical for thread safety
+                if not done and root.winfo_exists():
+                    # Use root.after with a local copy of the power value
+                    # This schedules the UI update to happen in the main thread
+                    power_val = local_power  # Make a local copy for the lambda
+                    if power_val is not None and not np.isnan(power_val):
+                        root.after(0, lambda p=power_val: power_label.config(text=f"Power: {p:.2f} dBm"))
+                    else:
+                        root.after(0, lambda: power_label.config(text="Power: Measurement Failed"))
+            except Exception as e:
+                print(f"ERROR in measurement thread: {e}")
+                # If we get an exception, add a small delay to prevent tight loops
+                time.sleep(0.1)
+            
+            # Sleep to avoid tight loop
+            time.sleep(1)
+    
     def done_callback():
         """Return to the correct Z height and exit."""
         nonlocal done
-        done = True  # Stop the measure_power thread
-        printer.send_gcode(f"G1 Z{z_height:.3f} F3000")  # Return to the correct Z height
-        root.quit()  # Safely exit the main loop
+        # Signal the thread to stop before destroying the window
+        done = True
+        time.sleep(0.3)  # Give the thread more time to completely exit
+        
+        # Move to final height - do this before destroying the window
+        try:
+            printer.send_gcode(f"G1 Z{z_height:.3f} F3000")
+            # Safely destroy AFTER all operations completed
+            safe_destroy()
+        except Exception as e:
+            print(f"ERROR in done_callback: {e}")
+            safe_destroy()
+    
+    def safe_destroy():
+        """Safely destroy the window from the main thread.
+        This function is critical for preventing Tcl_AsyncDelete errors.
+        """
+        try:
+            # Schedule destruction with a small delay to allow other operations to complete
+            root.after(200, lambda: actually_destroy())
+        except Exception as e:
+            print(f"ERROR scheduling window destruction: {e}")
+    
+    def actually_destroy():
+        """Actually perform the window destruction after all operations are complete."""
+        try:
+            root.quit()
+            root.destroy()
+        except Exception as e:
+            print(f"ERROR during window cleanup: {e}")
 
     def adjust_z(delta):
         """Adjust the Z height by a specified delta without moving X or Y."""
@@ -134,7 +189,7 @@ def adjust_head(printer, usrp, streamer):
     # Create the Tkinter window
     root = tk.Tk()
     root.title("Adjust Head Position")
-    root.geometry("600x500")  # Increased height to accommodate all elements
+    root.geometry("600x560")  # Increased height to accommodate the new message
 
     # Add corner buttons
     tk.Button(root, text="Upper Left", command=lambda: move_to_corner("Upper Left")).place(x=50, y=50)
@@ -174,12 +229,56 @@ def adjust_head(printer, usrp, streamer):
     y_label = tk.Label(root, text=f"Y Offset: {y_offset:.2f} mm", font=("Helvetica", 14))
     y_label.place(x=400, y=60)
 
-    # Start a thread for real-time power updates
+    # Add rotation instructions at the top
+    rotation_label = tk.Label(root, text="Please position probe at 0° angle position", 
+                            font=("Helvetica", 14), fg="blue")
+    rotation_label.place(x=120, y=480)  # Place below existing elements
+
+    # Start a thread for real-time power updates - make sure it's a daemon thread
+    # Daemon threads automatically terminate when the main program exits
     done = False
-    threading.Thread(target=measure_power, daemon=True).start()
+    power_thread = threading.Thread(target=measure_power, daemon=True)
+    power_thread.start()
 
-    # Run the Tkinter event loop
+    # Start the GUI event loop last to ensure everything is ready
     root.mainloop()
-
+    
+    # Ensure thread cleanup before returning
+    # This is VERY important to avoid Tcl_AsyncDelete errors
+    done = True
+    try:
+        # Give the thread more time to fully exit
+        time.sleep(0.5)
+        
+        # Ensure all pending Tkinter events are processed
+        while root.winfo_exists():
+            try:
+                root.update()
+            except:
+                break
+            time.sleep(0.01)
+        
+        # Forcefully destroy any remaining Tk objects
+        try:
+            root.quit()
+            root.destroy()
+        except:
+            pass
+            
+        # Force Python's garbage collection to clean up Tkinter objects
+        import gc
+        gc.collect()
+        
+        # Clear any remaining Tcl interpreter resources
+        # This helps prevent cross-thread Tcl interpreter issues
+        try:
+            from tkinter import _tkinter
+            _tkinter.create()
+        except:
+            pass
+        
+    except Exception as e:
+        print(f"ERROR during thread cleanup: {e}")
+    
     # Return the final offsets
     return x_offset, y_offset, z_height

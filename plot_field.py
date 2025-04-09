@@ -46,11 +46,6 @@ def plot_field(input_file, pcb_image_path, save_path=None, ax=None, vmin=None, v
     3. Overlays the PCB image with adjustable transparency
     4. Displays metadata and measurement information
     
-    The function can operate in two modes:
-    - Standalone mode (ax=None): Creates a complete figure with interactive controls
-    - Embedded mode (ax provided): Renders on an existing axis for integration
-      with more complex visualization tools
-    
     Args:
         input_file: Path to the scan results file
         pcb_image_path: Path to the PCB image overlay
@@ -113,14 +108,10 @@ def plot_field(input_file, pcb_image_path, save_path=None, ax=None, vmin=None, v
         unique_y = np.unique(y)
         print(f"Unique x values: {unique_x}")  # Debug message
         print(f"Unique y values: {unique_y}")  # Debug message
-        X, Y = np.meshgrid(unique_x, unique_y)
-        Z = field_strength.reshape(len(unique_y), len(unique_x))
-
-        # Interpolate data for smoothing
-        grid_x, grid_y = np.linspace(unique_x[0], unique_x[-1], 200), np.linspace(unique_y[0], unique_y[-1], 200)
-        grid_X, grid_Y = np.meshgrid(grid_x, grid_y)
-        Z = griddata((x, y), field_strength, (grid_X, grid_Y), method='cubic')
-
+        
+        # Check if we have 1D data (only one y-value)
+        is_1d_data = len(unique_y) == 1
+        
         # Load and rotate the PCB image
         try:
             pcb_image = Image.open(pcb_image_path)  # Use the parameter instead of the global variable
@@ -137,7 +128,7 @@ def plot_field(input_file, pcb_image_path, save_path=None, ax=None, vmin=None, v
 
         # Calculate PCB aspect ratio
         pcb_width = unique_x[-1] - unique_x[0]
-        pcb_height = unique_y[-1] - unique_y[0]
+        pcb_height = pcb_width / 2 if is_1d_data else (unique_y[-1] - unique_y[0])  # Estimate height for 1D data
         aspect_ratio = pcb_width / pcb_height
 
         # Create a new figure and axis if no axis is provided
@@ -148,32 +139,68 @@ def plot_field(input_file, pcb_image_path, save_path=None, ax=None, vmin=None, v
             fig = ax.figure  # Get the figure from the provided axis
 
         # Overlay the PCB image
+        extent = [unique_x[0], unique_x[-1], 
+                 unique_y[0] - pcb_height/2 if is_1d_data else unique_y[0], 
+                 unique_y[0] + pcb_height/2 if is_1d_data else unique_y[-1]]
+                 
         pcb_overlay = ax.imshow(
             pcb_image,
-            extent=[unique_x[0], unique_x[-1], unique_y[0], unique_y[-1]],  # Scale to PCB dimensions
+            extent=extent,  # Scale to PCB dimensions
             origin="lower",  # Ensure the origin matches the field plot
             alpha=0.35  # Initial transparency
         )
 
-        # Plot the field strength as a heatmap
-        heatmap = ax.imshow(
-            Z,
-            extent=[grid_x[0], grid_x[-1], grid_y[0], grid_y[-1]],  # Scale to interpolated grid dimensions
-            origin="lower",  # Ensure the origin matches the PCB image
-            cmap="plasma",  # Updated colormap to 'plasma' for a larger color range
-            alpha=0.65,  # Initial transparency
-            vmin=vmin,  # Use provided vmin if available
-            vmax=vmax   # Use provided vmax if available
-        )
-        
-        # Only create colorbar if axis is None or no vmin/vmax provided
-        if ax is None or (vmin is None and vmax is None):
-            plt.colorbar(heatmap, ax=ax, label="Field Strength (dBm)")
-
-        ax.set_xlabel("X (cm)")
-        ax.set_ylabel("Y (cm)")
-        ax.set_title("EM Field Strength with PCB Overlay")
-        ax.set_aspect('equal', adjustable='box')
+        # Handle 1D vs 2D data differently
+        if is_1d_data:
+            # For 1D data - create a simple line plot
+            sorted_data = sorted(zip(x, field_strength))
+            x_sorted = [point[0] for point in sorted_data]
+            field_sorted = [point[1] for point in sorted_data]
+            
+            heatmap = ax.plot(x_sorted, [unique_y[0]] * len(x_sorted), 'o-', 
+                            color='red', linewidth=2, alpha=0.65,
+                            marker='o', markersize=6)[0]
+            
+            # Color the markers according to field strength
+            scatter = ax.scatter(x_sorted, [unique_y[0]] * len(x_sorted), 
+                               c=field_sorted, cmap='plasma', 
+                               vmin=vmin, vmax=vmax,
+                               s=50, alpha=0.8)
+            
+            # Add colorbar if needed
+            if ax is None or (vmin is None and vmax is None):
+                plt.colorbar(scatter, ax=ax, label="Field Strength (dBm)")
+        else:
+            # For 2D data - use griddata interpolation as before
+            try:
+                # Prepare grid for interpolation
+                grid_x, grid_y = np.linspace(extent[0], extent[1], 200), np.linspace(extent[2], extent[3], 200)
+                grid_X, grid_Y = np.meshgrid(grid_x, grid_y)
+                Z = griddata((x, y), field_strength, (grid_X, grid_Y), method='cubic')
+                
+                # Draw field heatmap
+                heatmap = ax.imshow(
+                    Z,
+                    extent=extent,
+                    origin="lower",
+                    cmap="plasma",
+                    alpha=0.65,  # Complementary transparency
+                    vmin=vmin,
+                    vmax=vmax
+                )
+                
+                # Only create colorbar if axis is None or no vmin/vmax provided
+                if ax is None or (vmin is None and vmax is None):
+                    plt.colorbar(heatmap, ax=ax, label="Field Strength (dBm)")
+            except Exception as e:
+                # Fallback to scatter plot if interpolation fails
+                print(f"Interpolation failed, using scatter plot instead: {e}")
+                scatter = ax.scatter(x, y, c=field_strength, cmap='plasma', 
+                                    vmin=vmin, vmax=vmax, s=50, alpha=0.8)
+                heatmap = scatter  # For consistency in return value
+                
+                if ax is None or (vmin is None and vmax is None):
+                    plt.colorbar(scatter, ax=ax, label="Field Strength (dBm)")
 
         # Display metadata below the plot
         metadata_text = (
