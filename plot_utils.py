@@ -20,6 +20,12 @@ import numpy as np
 from file_utils import combine_scans
 from scipy.interpolate import griddata
 from PIL import Image
+# Import PCB_IMAGE_PATH, VERTICAL_FLIP, and CURRENT_GRID_SPACING_MM from config
+from config import PCB_IMAGE_PATH, VERTICAL_FLIP, CURRENT_GRID_SPACING_MM
+import time  # Import for timing calculations
+
+# Define constants
+GRID_SPACING = 2  # Spacing for current direction lines in mm
 
 def initialize_plot():
     """
@@ -113,26 +119,48 @@ def update_plot(ax, contour, colorbar, results, x_values, y_values):
 
     return contour
 
+def load_data(file_path):
+    """Load and validate the data from the given JSON file."""
+    try:
+        # Check if the file is a JSON file
+        if file_path.endswith(".json"):
+            with open(file_path, "r") as f:
+                data = json.load(f)
+            
+            # Extract metadata and results
+            metadata = data.get("metadata", {})
+            results = data.get("results", [])
+            
+            # Extract PCB size and resolution
+            pcb_size = metadata.get("PCB_SIZE", [1.0, 1.0])  # Default to 1x1 if missing
+            resolution = metadata.get("resolution", 30)  # Default resolution
+            
+            # Create a 2D grid for the field strength
+            x_values = sorted(set(point["x"] for point in results))
+            y_values = sorted(set(point["y"] for point in results))
+            field_strength = np.full((len(y_values), len(x_values)), np.nan)  # Initialize with NaN
+            
+            for point in results:
+                x_idx = x_values.index(point["x"])
+                y_idx = y_values.index(point["y"])
+                field_strength[y_idx, x_idx] = point["field_strength"]
+            
+            return field_strength, pcb_size, resolution
+        else:
+            raise ValueError("Unsupported file format. Only JSON files are supported.")
+    except Exception as e:
+        print(f"Error loading data from {file_path}: {e}")
+        return None, None, None
+
 def plot_with_selector(file_0d, file_90d, file_45d=None):
     """
     Plot results with angle selector for switching between 0°, 90°, 45°, and combined views.
-    
-    This function creates an integrated UI with:
-    - A control panel on the left for selecting scan orientation
-    - An interactive visualization on the right showing field strength
-    - A transparency slider to adjust PCB overlay visibility
-    
-    The implementation takes special care to:
-    1. Use a consistent color scale across all views
-    2. Maintain a single colorbar to avoid duplication
-    3. Allow real-time adjustment of transparency
-    4. Properly clean up resources when switching views
-    
-    Args:
-        file_0d: Path to the 0° scan results file
-        file_90d: Path to the 90° scan results file
-        file_45d: Optional path to the 45° scan results file
     """
+    print(f"Starting plot_with_selector with files:")
+    print(f"  0° file: {file_0d}")
+    print(f"  90° file: {file_90d}")
+    print(f"  45° file: {file_45d if file_45d else 'Not provided'}")
+
     # Load data files
     with open(file_0d, 'r') as f:
         data_0d = json.load(f)
@@ -148,24 +176,14 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
     # Create combined data
     combined_file = file_0d.replace('_0d.json', '_combined.json')
     if not os.path.exists(combined_file):
+        print(f"Creating combined file at {combined_file}")
         data_combined = combine_scans(file_0d, file_90d, file_45d)
         with open(combined_file, 'w') as f:
             json.dump(data_combined, f)
     else:
+        print(f"Loading existing combined file from {combined_file}")
         with open(combined_file, 'r') as f:
             data_combined = json.load(f)
-    
-    # Create the main Tkinter window
-    root = tk.Tk()
-    root.title("Field Scanner Visualization")
-    root.geometry("1200x800")
-    
-    # Create frames
-    button_frame = tk.Frame(root, width=200, padx=10, pady=10)
-    button_frame.pack(side=tk.LEFT, fill=tk.Y)
-    
-    plot_frame = tk.Frame(root)
-    plot_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
     
     # Get global min/max for consistent colormap
     all_field_strengths = []
@@ -178,173 +196,408 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
     
     vmin = min(all_field_strengths)
     vmax = max(all_field_strengths)
+    print(f"Field strength range: {vmin:.2f} to {vmax:.2f} dBm")
     
-    # Create figure and canvas
-    fig, ax = plt.subplots(figsize=(10, 8))
-    canvas = FigureCanvasTkAgg(fig, master=plot_frame)
-    canvas.draw()
-    canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+    # Extract PCB size from metadata
+    metadata = data_0d.get("metadata", {}) if isinstance(data_0d, dict) else {}
+    pcb_size = metadata.get("PCB_SIZE", [1.0, 1.0])  # Default to 1x1 if missing
+    print(f"PCB size from metadata: {pcb_size}")
     
-    # Add toolbar
-    toolbar_frame = tk.Frame(plot_frame)
-    toolbar_frame.pack(side=tk.BOTTOM, fill=tk.X)
-    toolbar = NavigationToolbar2Tk(canvas, toolbar_frame)
-    toolbar.update()
+    # Create figure with space for UI elements
+    plt.rcParams.update({'font.size': 10})
+    fig = plt.figure(figsize=(12, 8))
     
-    # Create a dummy transparent image for initial colorbar
-    dummy_data = np.zeros((10, 10))
-    dummy_img = ax.imshow(dummy_data, cmap='plasma', visible=False, vmin=vmin, vmax=vmax)
+    # Create plot area and UI areas - main plot on right side, controls on left
+    plot_ax = plt.axes([0.25, 0.25, 0.7, 0.65])  # Main plot area (moved to the right)
     
-    # Create a persistent colorbar that won't be destroyed or recreated
-    persistent_colorbar = fig.colorbar(dummy_img, ax=ax, label="Field Strength (dBm)")
+    # Create controls area on left side of window
+    buttons_left_pos = 0.05
+    button_width = 0.12
+    button_height = 0.05
+    button_spacing = 0.015
+    button_start_y = 0.65
     
-    # Initialize plot objects dictionary to store image references
+    # Create button areas - stack vertically on left side
+    button0_ax = plt.axes([buttons_left_pos, button_start_y, button_width, button_height])
+    button90_ax = plt.axes([buttons_left_pos, button_start_y - (button_height + button_spacing), button_width, button_height])
+    button45_ax = plt.axes([buttons_left_pos, button_start_y - 2 * (button_height + button_spacing), button_width, button_height])
+    button_combined_ax = plt.axes([buttons_left_pos, button_start_y - 3 * (button_height + button_spacing), button_width, button_height])
+    
+    # Add current direction button below others
+    button_current_ax = plt.axes([buttons_left_pos, button_start_y - 4 * (button_height + button_spacing), button_width, button_height])
+    
+    # Add Done button at the bottom
+    button_done_ax = plt.axes([buttons_left_pos, button_start_y - 5 * (button_height + button_spacing), button_width, button_height])
+    
+    # Add transparency slider on the left - moved down to avoid overlap
+    slider_ax = plt.axes([buttons_left_pos, 0.15, button_width, 0.03])  # Moved down from 0.2 to 0.15
+    
+    # Create a dictionary to store plot objects
     plot_objects = {
         "pcb_overlay": None,
-        "heatmap": None
+        "heatmap": None,
+        "current_lines": [],
+        "colorbar": None
     }
     
-    # Current state variables
-    current_file = tk.StringVar(value=combined_file)  # Start with combined plot
-    current_title = tk.StringVar(value="Combined Scan")
-    alpha_value = tk.DoubleVar(value=0.5)  # Default transparency value
+    # Current active file
+    current_file = file_0d
+    current_title = "0° Scan"
+    current_data = data_0d
+    
+    # Create transparency slider
+    alpha_slider = Slider(slider_ax, 'PCB Transparency', 0.0, 1.0, valinit=0.5)
+    
+    # Create a variable to store our colorbar reference
+    colorbar_obj = None
+    
+    def load_and_prepare_data(file_path):
+        """Load data and prepare for plotting"""
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+        
+        # Extract results depending on data format
+        if isinstance(data, dict) and "results" in data:
+            results = data["results"]
+            metadata = data.get("metadata", {})
+        else:
+            results = data
+            metadata = {}
+            
+        # Extract coordinates and field strengths
+        x = np.array([point["x"] for point in results]) * 100  # Convert to cm
+        y = np.array([point["y"] for point in results]) * 100
+        field_strength = np.array([point["field_strength"] for point in results])
+        
+        # Get unique coordinates for grid
+        unique_x = np.unique(x)
+        unique_y = np.unique(y)
+        
+        # Prepare grid for interpolation
+        grid_x = np.linspace(min(unique_x), max(unique_x), 200)
+        grid_y = np.linspace(min(unique_y), max(unique_y), 200)
+        grid_X, grid_Y = np.meshgrid(grid_x, grid_y)
+        
+        # Interpolate field values
+        Z = griddata((x, y), field_strength, (grid_X, grid_Y), method='cubic')
+        
+        # Calculate extent for plotting
+        extent = [min(unique_x), max(unique_x), min(unique_y), max(unique_y)]
+        
+        return data, results, metadata, Z, extent
     
     def update_plot():
-        """Update the plot with the selected scan data."""
+        """Update the plot with current data"""
+        nonlocal current_data, colorbar_obj
+        
+        print(f"Updating plot with file: {current_file}")
+        
         try:
-            # Clear the existing plot content but keep the figure
-            ax.clear()
+            # Clear the plot
+            plot_ax.clear()
             
-            # Load and plot the new data
-            file_path = current_file.get()
-            print(f"Plotting file: {file_path}")
+            # Clear current lines
+            for line in plot_objects["current_lines"]:
+                if hasattr(line, 'remove'):
+                    line.remove()
+            plot_objects["current_lines"] = []
             
-            # Directly draw the PCB and heatmap on our existing axis
-            pcb_img = Image.open("./pcb_die.jpg")
-            if True:  # VERTICAL_FLIP
-                pcb_img = pcb_img.transpose(Image.FLIP_TOP_BOTTOM)
-            pcb_img = np.array(pcb_img)
+            # Load and prepare data
+            current_data, results, metadata, Z, extent = load_and_prepare_data(current_file)
             
-            # Load the data and prepare coordinates
-            with open(file_path, 'r') as f:
-                data = json.load(f)
-            results = data["results"] if isinstance(data, dict) else data
+            # Load PCB image
+            try:
+                pcb_img = Image.open(PCB_IMAGE_PATH)
+                if VERTICAL_FLIP:
+                    pcb_img = pcb_img.transpose(Image.FLIP_TOP_BOTTOM)
+                pcb_img = np.array(pcb_img)
+            except Exception as e:
+                print(f"Error loading PCB image: {e}")
+                pcb_img = np.zeros((100, 100, 3), dtype=np.uint8)  # Placeholder black image
             
-            # Extract coordinates and field strengths
-            x_coords = np.array([point["x"] for point in results]) * 100  # Convert to cm
-            y_coords = np.array([point["y"] for point in results]) * 100
-            field = np.array([point["field_strength"] for point in results])
-            
-            # Prepare grid for plotting
-            unique_x = np.unique(x_coords)
-            unique_y = np.unique(y_coords)
-            
-            # Create extent for both images
-            extent = [unique_x.min(), unique_x.max(), unique_y.min(), unique_y.max()]
-            
-            # Draw PCB overlay first
-            plot_objects["pcb_overlay"] = ax.imshow(
-                pcb_img,
-                extent=extent,
-                origin="lower",
-                alpha=alpha_value.get()  # Use current alpha value
+            # Plot PCB overlay
+            plot_objects["pcb_overlay"] = plot_ax.imshow(
+                pcb_img, extent=extent, origin="lower", 
+                alpha=alpha_slider.val
             )
             
-            # Prepare grid for interpolation
-            grid_x, grid_y = np.linspace(extent[0], extent[1], 200), np.linspace(extent[2], extent[3], 200)
-            grid_X, grid_Y = np.meshgrid(grid_x, grid_y)
-            Z = griddata((x_coords, y_coords), field, (grid_X, grid_Y), method='cubic')
-            
-            # Draw field heatmap
-            plot_objects["heatmap"] = ax.imshow(
-                Z,
-                extent=extent,
-                origin="lower",
-                cmap="plasma",
-                alpha=1.0 - alpha_value.get(),  # Complementary alpha
-                vmin=vmin,
-                vmax=vmax
+            # Plot field heatmap
+            plot_objects["heatmap"] = plot_ax.imshow(
+                Z, extent=extent, origin="lower", cmap="plasma",
+                alpha=1.0-alpha_slider.val, vmin=vmin, vmax=vmax
             )
             
-            # Update colorbar mappings - important for correct color scale
-            persistent_colorbar.update_normal(plot_objects["heatmap"])
+            # Remove all existing text elements from the figure
+            for txt in fig.texts:
+                try:
+                    txt.remove()
+                except:
+                    pass
+            
+            # Properly handle colorbar
+            if colorbar_obj is not None:
+                try:
+                    colorbar_obj.remove()
+                except Exception as e:
+                    print(f"Notice: Could not remove old colorbar: {e}")
+            
+            # Create a fresh colorbar with consistent positioning
+            colorbar_ax = fig.add_axes([0.85, 0.25, 0.03, 0.65])  # Fixed position
+            colorbar_obj = fig.colorbar(plot_objects["heatmap"], cax=colorbar_ax)
+            colorbar_obj.set_label("Field Strength (dBm)")
+            plot_objects["colorbar"] = colorbar_obj
             
             # Set labels and title
-            ax.set_xlabel("X (cm)")
-            ax.set_ylabel("Y (cm)")
-            ax.set_title("EM Field Strength with PCB Overlay")
-            ax.set_aspect('equal', adjustable='box')
-            fig.suptitle(current_title.get(), fontsize=14)
+            plot_ax.set_xlabel("X (cm)")
+            plot_ax.set_ylabel("Y (cm)")
+            plot_ax.set_title(current_title)
             
-            # Update canvas
-            canvas.draw()
+            # Set fixed position for plot axis
+            plot_ax.set_position([0.25, 0.25, 0.55, 0.65])  # Fixed position
             
-            return True
+            # Extract and display metadata
+            if isinstance(current_data, dict) and "metadata" in current_data:
+                meta = current_data["metadata"]
+                meta_text = f"Frequency: {meta.get('center_freq', 0)/1e6:.2f} MHz, "
+                meta_text += f"BW: {meta.get('BW', 0)/1e6:.2f} MHz, "
+                meta_text += f"Resolution: {meta.get('resolution', 'N/A')} pts/cm"
+                
+                # Add new text
+                fig.text(0.5, 0.02, meta_text, ha='center')
+            
+            # Make sure current title is displayed in figure title as well
+            fig.suptitle(current_title, fontsize=14)
+            
+            # Reset figure size to original size to prevent shrinking
+            fig.set_size_inches(12, 8, forward=True)
+            
+            # Redraw the figure
+            fig.canvas.draw_idle()
+            print(f"Plot updated successfully with: {current_title}")
+            
         except Exception as e:
-            print(f"Error in update_plot: {e}")
+            print(f"Error updating plot: {str(e)}")
             import traceback
             traceback.print_exc()
-            return False
     
-    def update_alpha(val):
-        """Update transparency of plot elements based on slider value."""
+    def on_alpha_change(val):
+        """Update transparency when slider changes"""
+        if plot_objects["pcb_overlay"] is not None:
+            plot_objects["pcb_overlay"].set_alpha(val)
+        if plot_objects["heatmap"] is not None:
+            plot_objects["heatmap"].set_alpha(1.0 - val)
+        fig.canvas.draw_idle()
+    
+    def show_currents(event):
+        """Add current direction indicators to plot"""
+        print("Starting current direction calculation...")
+        start_time = time.time()
+        
         try:
-            alpha = alpha_value.get()
-            print(f"Setting alpha: {alpha}")
+            # First clear any existing current lines
+            for line in plot_objects["current_lines"]:
+                if hasattr(line, 'remove'):
+                    line.remove()
+            plot_objects["current_lines"] = []
             
-            if plot_objects["pcb_overlay"] is not None:
-                plot_objects["pcb_overlay"].set_alpha(alpha)
-                print("Updated PCB overlay alpha")
+            # Load 0° and 90° data for current direction calculation
+            print("Loading 0° and 90° scan data...")
+            with open(file_0d, 'r') as f:
+                data_0d = json.load(f)
+            with open(file_90d, 'r') as f:
+                data_90d = json.load(f)
             
-            if plot_objects["heatmap"] is not None:
-                plot_objects["heatmap"].set_alpha(1.0 - alpha)
-                print("Updated heatmap alpha")
+            data_load_time = time.time()
+            print(f"Data loaded in {data_load_time - start_time:.2f} seconds")
             
-            # Force redraw
-            canvas.draw_idle()
+            results_0d = data_0d["results"] if isinstance(data_0d, dict) and "results" in data_0d else data_0d
+            results_90d = data_90d["results"] if isinstance(data_90d, dict) and "results" in data_90d else data_90d
+            
+            # Create dictionaries for quick lookup by position
+            print(f"Processing {len(results_0d)} measurement points...")
+            points_0d = {(point["x"], point["y"]): point["field_strength"] for point in results_0d}
+            points_90d = {(point["x"], point["y"]): point["field_strength"] for point in results_90d}
+            
+            # Get extent of the measurement area
+            x_coords = [p[0] for p in points_0d.keys()]
+            y_coords = [p[1] for p in points_0d.keys()]
+            x_min, x_max = min(x_coords), max(x_coords)
+            y_min, y_max = min(y_coords), max(y_coords)
+            
+            print(f"Measurement area: X=[{x_min:.4f}, {x_max:.4f}], Y=[{y_min:.4f}, {y_max:.4f}]")
+            
+            # Use the constant from config.py specifically for current direction grid
+            grid_spacing_m = CURRENT_GRID_SPACING_MM / 1000.0  # Convert mm to meters
+            x_points = int((x_max - x_min) / grid_spacing_m) + 1
+            y_points = int((y_max - y_min) / grid_spacing_m) + 1
+            total_points = x_points * y_points
+            
+            print(f"Setting up grid for current arrows with {CURRENT_GRID_SPACING_MM}mm spacing")
+            print(f"Planned grid: {x_points}x{y_points}={total_points} points")
+            
+            # Store original axis position and figure size to restore later
+            orig_position = plot_ax.get_position()
+            orig_figsize = fig.get_size_inches()
+            
+            # Create grid of points for current arrows
+            x_grid = np.linspace(x_min, x_max, x_points)
+            y_grid = np.linspace(y_min, y_max, y_points)
+            
+            # For efficient nearest-neighbor search
+            from scipy.spatial import KDTree
+            coords = np.array(list(points_0d.keys()))
+            tree = KDTree(coords)
+            
+            # Show at most 300 arrows to avoid overcrowding
+            max_arrows = 300
+            arrow_count = 0
+            skipped_count = 0
+            
+            # For each grid point, calculate current direction
+            for x_idx, x in enumerate(x_grid):
+                if x_idx % max(1, len(x_grid)//10) == 0:
+                    print(f"Processing row {x_idx+1}/{len(x_grid)}")
+                    
+                for y in y_grid:
+                    # Stop if we've reached the maximum number of arrows
+                    if arrow_count >= max_arrows:
+                        break
+                    
+                    # Find nearest data point
+                    distance, idx = tree.query([x, y], k=1)
+                    nearest_point = tuple(coords[idx])
+                    
+                    # Skip if too far from measurements
+                    if distance > 0.005:  # 5mm threshold
+                        skipped_count += 1
+                        continue
+                    
+                    # Get field strengths from both orientations
+                    h_field = points_0d.get(nearest_point)
+                    v_field = points_90d.get(nearest_point)
+                    
+                    if h_field is None or v_field is None:
+                        skipped_count += 1
+                        continue
+                        
+                    # Convert from dBm to linear scale
+                    h_field_linear = 10**(h_field/10)
+                    v_field_linear = 10**(v_field/10)
+                    
+                    # Skip if both fields are very weak
+                    if h_field_linear < 1e-5 and v_field_linear < 1e-5:
+                        skipped_count += 1
+                        continue
+                    
+                    # Calculate direction and magnitude
+                    angle = np.arctan2(v_field_linear, h_field_linear)
+                    magnitude = np.sqrt(h_field_linear**2 + v_field_linear**2)
+                    
+                    # Use fixed arrow length for better visualization
+                    arrow_length = 0.2  # Fixed size in cm
+                    
+                    # Calculate arrow endpoints
+                    dx = arrow_length * np.cos(angle)
+                    dy = arrow_length * np.sin(angle)
+                    
+                    # Plot arrow with higher visibility
+                    try:
+                        line = plot_ax.arrow(x*100, y*100, dx, dy,
+                                          head_width=0.1, head_length=0.1,
+                                          fc='red', ec='red', alpha=0.9, linewidth=1.0,
+                                          length_includes_head=True)
+                        plot_objects["current_lines"].append(line)
+                        arrow_count += 1
+                    except Exception as e:
+                        print(f"Error creating arrow: {e}")
+                
+                if arrow_count >= max_arrows:
+                    break
+                    
+            print(f"Added {arrow_count} current direction arrows")
+            
+            # Restore original position and figure size
+            plot_ax.set_position(orig_position)
+            fig.set_size_inches(orig_figsize, forward=True)
+            
+            # Ensure the plot is properly redrawn
+            fig.canvas.draw_idle()
+            
         except Exception as e:
-            print(f"Error in update_alpha: {e}")
+            print(f"Error calculating current directions: {e}")
             import traceback
             traceback.print_exc()
+            
+        print(f"Current direction operation completed in {time.time() - start_time:.2f} seconds")
     
-    # Create UI elements
-    tk.Label(button_frame, text="Select Scan Orientation:", font=("Helvetica", 12)).pack(pady=10)
+    def show_0d(event):
+        """Switch to 0° scan view"""
+        nonlocal current_file, current_title
+        current_file = file_0d
+        current_title = "0° Scan"
+        print(f"Switching to 0° scan view: {file_0d}")  # Debug message
+        update_plot()  # Ensure the plot is updated
     
-    # Angle selection buttons with simplified command functions
-    tk.Button(button_frame, text="0° Scan", font=("Helvetica", 12),
-              command=lambda: [current_file.set(file_0d), current_title.set("0° Scan"), update_plot()]).pack(pady=5, fill=tk.X)
+    def show_90d(event):
+        """Switch to 90° scan view"""
+        nonlocal current_file, current_title
+        current_file = file_90d
+        current_title = "90° Scan"
+        print(f"Switching to 90° scan view: {file_90d}")  # Debug message
+        update_plot()  # Ensure the plot is updated
     
-    tk.Button(button_frame, text="90° Scan", font=("Helvetica", 12),
-              command=lambda: [current_file.set(file_90d), current_title.set("90° Scan"), update_plot()]).pack(pady=5, fill=tk.X)
+    def show_45d(event):
+        """Switch to 45° scan view"""
+        nonlocal current_file, current_title
+        if file_45d and os.path.exists(file_45d):
+            current_file = file_45d
+            current_title = "45° Scan"
+            print(f"Switching to 45° scan view: {file_45d}")  # Debug message
+            update_plot()  # Ensure the plot is updated
     
-    # Add 45° button if data is available
-    if file_45d and os.path.exists(file_45d):
-        tk.Button(button_frame, text="45° Scan", font=("Helvetica", 12),
-                  command=lambda: [current_file.set(file_45d), current_title.set("45° Scan"), update_plot()]).pack(pady=5, fill=tk.X)
+    def show_combined(event):
+        """Switch to combined view"""
+        nonlocal current_file, current_title
+        current_file = combined_file
+        current_title = "Combined Scan"
+        print(f"Switching to combined scan view: {combined_file}")  # Debug message
+        update_plot()  # Ensure the plot is updated
     
-    tk.Button(button_frame, text="Combined Scan", font=("Helvetica", 12),
-              command=lambda: [current_file.set(combined_file), current_title.set("Combined Scan"), update_plot()]).pack(pady=5, fill=tk.X)
+    def exit_plot(event):
+        """Close the plot window"""
+        plt.close(fig)
+        print("Plot window closed")
     
-    # Done button
-    tk.Button(button_frame, text="Done", font=("Helvetica", 12),
-              command=root.destroy).pack(pady=20, fill=tk.X)
+    # Create the buttons with updated styles - fix button handlers
+    button0 = Button(button0_ax, '0° Scan', color='lightblue')
+    button0.on_clicked(show_0d)  # Connect to the correct handler
     
-    # Add alpha transparency slider with direct update function
-    tk.Label(button_frame, text="Adjust Transparency:", font=("Helvetica", 12)).pack(pady=10)
+    button90 = Button(button90_ax, '90° Scan', color='lightblue')
+    button90.on_clicked(show_90d)  # Connect to the correct handler
     
-    alpha_slider = tk.Scale(
-        button_frame, 
-        from_=0.0, 
-        to=1.0, 
-        resolution=0.01,
-        orient=tk.HORIZONTAL, 
-        variable=alpha_value,
-        command=lambda val: update_alpha(val)
-    )
-    alpha_slider.pack(fill=tk.X, pady=5)
+    button45 = Button(button45_ax, '45° Scan', color='lightblue')
+    button45.on_clicked(show_45d)  # Connect to the correct handler
+    if not (file_45d and os.path.exists(file_45d)):
+        button45.set_active(False)
     
-    # Show initial plot (combined view by default)
+    button_combined = Button(button_combined_ax, 'Combined', color='lightblue')
+    button_combined.on_clicked(show_combined)  # Connect to the correct handler
+    
+    button_current = Button(button_current_ax, 'Show Currents', color='lightcoral')
+    button_current.on_clicked(show_currents)
+    
+    # Add the Done button
+    button_done = Button(button_done_ax, 'Done', color='lightgreen')
+    button_done.on_clicked(exit_plot)  # Connect to the exit handler
+    
+    # Add a label for the transparency slider - moved down to match slider
+    fig.text(buttons_left_pos + button_width/2, 0.20, 'Adjust Transparency:', ha='center')
+    
+    # Connect slider to update function
+    alpha_slider.on_changed(on_alpha_change)
+    
+    # Initial plot
     update_plot()
     
-    # Start the Tkinter event loop
-    root.mainloop()
+    # Show the figure
+    plt.show()

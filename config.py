@@ -9,8 +9,8 @@
 # different PCBs, frequencies, and measurement conditions.
 
 # PCB-related constants
-#PCB_SIZE_CM = (2.165, 1.53)  # PCB size in centimeters (width, height)
-PCB_SIZE_CM = (0.5, 0.53)  # PCB size in centimeters (width, height)
+PCB_SIZE_CM = (2.165, 1.53)  # PCB size in centimeters (width, height)
+#PCB_SIZE_CM = (0.5, 0.53)  # PCB size in centimeters (width, height)
 
 RESOLUTION = 30  # Resolution in points per centimeter
 STEP_SIZE = 1 / RESOLUTION  # Step size in centimeters
@@ -39,3 +39,10 @@ DEBUG_ALL = False  # Set to True to enable verbose debug output throughout scann
 # Output configuration
 PCB_IMAGE_PATH = "./pcb_die.jpg"  # Path to the PCB image
 OUTPUT_FILE = "scan_v1a_400MHz_Rx_pcb.json"  # Default output file name
+
+# Visualization configuration
+VERTICAL_FLIP = True  # Whether to flip the PCB image vertically for proper alignment
+HORIZONTAL_FLIP = False  # Whether to flip the PCB image horizontally
+
+# Current visualization settings
+CURRENT_GRID_SPACING_MM = 2.0  # Grid spacing for current direction arrows in mm
