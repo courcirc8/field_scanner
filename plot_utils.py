@@ -199,24 +199,78 @@ def compute_current_direction(args):
 def show_currents(event):
     """Display current directions using arrows or streamlines."""
     print("Computing current directions...")
-    
+
+    # Access the figure and required file paths 
     try:
         fig = event.inaxes.figure
-        current_file = fig.current_file  # Get current_file from the figure
         
-        if current_file is None:
-            print("Error: No current file selected")
+        # Get the main plot axes from the figure instead of the button's axes
+        plot_ax = fig.main_plot_ax  # Use the stored reference to the main plot axes
+        
+        # Get file paths stored in the figure object
+        if not hasattr(fig, 'file_0d') or not hasattr(fig, 'file_90d'):
+            print("Error: Required file paths not found in figure object")
             return
             
-        print(f"Processing file: {current_file}")
+        file_0d = fig.file_0d
+        file_90d = fig.file_90d
+        file_45d = fig.file_45d if hasattr(fig, 'file_45d') else None
         
-        # Use the selected file for current calculations
-        # ...rest of the function remains the same...
+        print(f"Using files for current calculation:")
+        print(f"  0° file: {file_0d}")
+        print(f"  90° file: {file_90d}")
+        print(f"  45° file: {file_45d if file_45d else 'Not available'}")
+
+        # Ensure the 0°, 45°, and 90° files are loaded
+        with open(file_0d, 'r') as f:
+            data_0d = json.load(f)
+        with open(file_90d, 'r') as f:
+            data_90d = json.load(f)
+        if file_45d and os.path.exists(file_45d):
+            with open(file_45d, 'r') as f:
+                data_45d = json.load(f)
+        else:
+            data_45d = None
     except Exception as e:
-        print(f"Error accessing current file: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"Error loading angle files: {e}")
         return
+
+    # Extract PCB size and resolution from metadata
+    metadata = data_0d.get("metadata", {})
+    pcb_size = metadata.get("PCB_SIZE", [1.0, 1.0])  # Default to 1x1 if missing
+    resolution = metadata.get("resolution", 30)  # Default resolution
+
+    # Create a regular grid for x and y
+    x = np.linspace(0, pcb_size[0], resolution)
+    y = np.linspace(0, pcb_size[1], resolution)
+    X, Y = np.meshgrid(x, y)
+
+    # Compute the field orientation at each grid point
+    U = np.zeros_like(X)  # Placeholder for x-component of current
+    V = np.zeros_like(Y)  # Placeholder for y-component of current
+
+    for i in range(X.shape[0]):
+        for j in range(X.shape[1]):
+            # Get the field strength at this grid point for each angle
+            field_0 = data_0d["results"][i * resolution + j]["field_strength"]
+            field_90 = data_90d["results"][i * resolution + j]["field_strength"]
+            field_45 = data_45d["results"][i * resolution + j]["field_strength"] if data_45d else 0
+
+            # Compute the orientation of the field (simplified example)
+            angle = np.arctan2(field_90 - field_0, field_45)
+            U[i, j] = np.cos(angle)
+            V[i, j] = np.sin(angle)
+
+    # Plot streamlines - using plot_ax instead of undefined ax
+    try:
+        # Convert grid spacing from meters to centimeters for plotting
+        X_cm = X * 100
+        Y_cm = Y * 100
+        stream = plot_ax.streamplot(X_cm, Y_cm, U, V, color='red', linewidth=0.8)
+        fig.canvas.draw_idle()
+        print("Streamlines displayed.")
+    except ValueError as e:
+        print(f"Error processing current directions: {e}")
 
 def plot_with_selector(file_0d, file_90d, file_45d=None):
     """
@@ -276,6 +330,9 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
     # Create plot area and UI areas - main plot on right side, controls on left
     plot_ax = plt.axes([0.25, 0.25, 0.7, 0.65])  # Main plot area (moved to the right)
     
+    # Store a reference to the main plot axes in the figure for access by callbacks
+    fig.main_plot_ax = plot_ax
+    
     # Create controls area on left side of window
     buttons_left_pos = 0.05
     button_width = 0.12
@@ -313,6 +370,10 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
     
     # Store the current file directly in the figure for access from callbacks
     fig.current_file = current_file
+    # Store all file paths in the figure object for access by show_currents
+    fig.file_0d = file_0d
+    fig.file_90d = file_90d
+    fig.file_45d = file_45d
     
     # Create transparency slider - MOVED THIS HERE TO FIX THE ERROR
     alpha_slider = Slider(slider_ax, 'PCB Transparency', 0.0, 1.0, valinit=0.5)
