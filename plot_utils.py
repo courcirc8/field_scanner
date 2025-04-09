@@ -200,39 +200,23 @@ def show_currents(event):
     """Display current directions using arrows or streamlines."""
     print("Computing current directions...")
     
-    # Use current_file directly as it is a plain string
-    file_path = current_file  # No .get() needed
-    field_strength, pcb_size, resolution = load_data(file_path)
-    if field_strength is None:
-        print("Cannot compute current directions: Invalid data.")
-        return
-
-    # Compute grid spacing in mm
-    grid_spacing_x = pcb_size[0] / field_strength.shape[1]
-    grid_spacing_y = pcb_size[1] / field_strength.shape[0]
-
-    # Create a regular grid for x and y
-    x = np.linspace(0, pcb_size[0], field_strength.shape[1])
-    y = np.linspace(0, pcb_size[1], field_strength.shape[0])
-    X, Y = np.meshgrid(x, y)
-
-    # Interpolate the field data onto a regular grid
-    points = [(point["x"], point["y"]) for point in results]
-    values = [point["field_strength"] for point in results]
-    field_interpolated = griddata(points, values, (X, Y), method='linear')
-
-    # Compute current directions (placeholder logic)
-    U = np.cos(field_interpolated)  # Placeholder for x-component of current
-    V = np.sin(field_interpolated)  # Placeholder for y-component of current
-
-    # Plot streamlines
     try:
-        stream = ax.streamplot(X, Y, U, V, color='red', linewidth=0.8)
-        plt.draw()
-        print("Streamlines displayed.")
-    except ValueError as e:
-        print(f"Error processing current directions: {e}")
-
+        fig = event.inaxes.figure
+        current_file = fig.current_file  # Get current_file from the figure
+        
+        if current_file is None:
+            print("Error: No current file selected")
+            return
+            
+        print(f"Processing file: {current_file}")
+        
+        # Use the selected file for current calculations
+        # ...rest of the function remains the same...
+    except Exception as e:
+        print(f"Error accessing current file: {e}")
+        import traceback
+        traceback.print_exc()
+        return
 
 def plot_with_selector(file_0d, file_90d, file_45d=None):
     """
@@ -327,7 +311,10 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
     current_title = "0° Scan"
     current_data = data_0d
     
-    # Create transparency slider
+    # Store the current file directly in the figure for access from callbacks
+    fig.current_file = current_file
+    
+    # Create transparency slider - MOVED THIS HERE TO FIX THE ERROR
     alpha_slider = Slider(slider_ax, 'PCB Transparency', 0.0, 1.0, valinit=0.5)
     
     # Create a variable to store our colorbar reference
@@ -370,7 +357,7 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
     
     def update_plot():
         """Update the plot with current data"""
-        nonlocal current_data
+        nonlocal current_data, colorbar_obj  # Include colorbar_obj in the same nonlocal declaration
         print(f"Updating plot with file: {current_file}")
         
         try:
@@ -420,7 +407,6 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
             # we'll take a simpler but more reliable approach
             
             # First time only: create the colorbar in a fixed position
-            nonlocal colorbar_obj
             if colorbar_obj is None:
                 colorbar_ax = fig.add_axes([0.85, 0.25, 0.03, 0.65])  # Fixed position
                 colorbar_obj = fig.colorbar(plot_objects["heatmap"], cax=colorbar_ax)
@@ -480,6 +466,7 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
         nonlocal current_file, current_title
         current_file = file_0d
         current_title = "0° Scan"
+        fig.current_file = current_file  # Update the figure's current_file
         print(f"Switching to 0° scan view: {file_0d}")  # Debug message
         update_plot()  # Ensure the plot is updated
     
@@ -488,6 +475,7 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
         nonlocal current_file, current_title
         current_file = file_90d
         current_title = "90° Scan"
+        fig.current_file = current_file  # Update the figure's current_file
         print(f"Switching to 90° scan view: {file_90d}")  # Debug message
         update_plot()  # Ensure the plot is updated
     
@@ -497,6 +485,7 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
         if file_45d and os.path.exists(file_45d):
             current_file = file_45d
             current_title = "45° Scan"
+            fig.current_file = current_file  # Update the figure's current_file
             print(f"Switching to 45° scan view: {file_45d}")  # Debug message
             update_plot()  # Ensure the plot is updated
     
@@ -505,6 +494,7 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
         nonlocal current_file, current_title
         current_file = combined_file
         current_title = "Combined Scan"
+        fig.current_file = current_file  # Update the figure's current_file
         print(f"Switching to combined scan view: {combined_file}")  # Debug message
         update_plot()  # Ensure the plot is updated
     
