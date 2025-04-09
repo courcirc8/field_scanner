@@ -35,7 +35,7 @@ HORIZONTAL_FLIP = False  # Flip the PCB image horizontally
 SECOND_INPUT_FILE = "./scan_v1a_400MHz_Rx_module2_nores_patched.json"
 SECOND_PCB_IMAGE_PATH = "./pcb_die.jpg"
 
-def plot_field(input_file, pcb_image_path, save_path=None):
+def plot_field(input_file, pcb_image_path, save_path=None, ax=None):
     """Plot the EM field strength from the scan results with PCB overlay and transparency adjustment."""
     try:
         print(f"Loading scan results from: {input_file}")  # Debug message
@@ -116,14 +116,17 @@ def plot_field(input_file, pcb_image_path, save_path=None):
         pcb_height = unique_y[-1] - unique_y[0]
         aspect_ratio = pcb_width / pcb_height
 
-        print("Creating the plot...")  # Debug message
-        fig, ax = plt.subplots(figsize=(8 * aspect_ratio, 8))
-        plt.subplots_adjust(left=0.15, right=0.95, bottom=0.35, top=0.9)  # Increased bottom margin to 0.35
+        # Create a new figure and axis if no axis is provided
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8 * aspect_ratio, 8))
+            plt.subplots_adjust(left=0.15, right=0.95, bottom=0.35, top=0.9)  # Adjust margins
+        else:
+            fig = ax.figure  # Get the figure from the provided axis
 
         # Overlay the PCB image
         pcb_overlay = ax.imshow(
             pcb_image,
-            extent=[unique_x[0], unique_x[-1], unique_y[0], unique_y[-1],],  # Scale to PCB dimensions
+            extent=[unique_x[0], unique_x[-1], unique_y[0], unique_y[-1]],  # Scale to PCB dimensions
             origin="lower",  # Ensure the origin matches the field plot
             alpha=0.35  # Initial transparency
         )
@@ -131,7 +134,7 @@ def plot_field(input_file, pcb_image_path, save_path=None):
         # Plot the field strength as a heatmap
         heatmap = ax.imshow(
             Z,
-            extent=[grid_x[0], grid_x[-1], grid_y[0], grid_y[-1],],  # Scale to interpolated grid dimensions
+            extent=[grid_x[0], grid_x[-1], grid_y[0], grid_y[-1]],  # Scale to interpolated grid dimensions
             origin="lower",  # Ensure the origin matches the PCB image
             cmap="plasma",  # Updated colormap to 'plasma' for a larger color range
             alpha=0.65  # Initial transparency
@@ -154,36 +157,39 @@ def plot_field(input_file, pcb_image_path, save_path=None):
         )
         fig.text(0.5, 0.01, metadata_text, ha="center", va="center", fontsize=10, wrap=True)  # Adjusted vertical position to 0.01
 
-        # Add a slider for transparency adjustment
-        ax_slider = plt.axes([0.02, 0.25, 0.03, 0.5], facecolor="lightgray")  # Slider on the left
-        slider = Slider(ax_slider, "Alpha", 0.0, 1.0, valinit=0.5, orientation="vertical")
+        # Add a slider for transparency adjustment if no axis is provided
+        if ax is None:
+            ax_slider = plt.axes([0.02, 0.25, 0.03, 0.5], facecolor="lightgray")  # Slider on the left
+            slider = Slider(ax_slider, "Alpha", 0.0, 1.0, valinit=0.5, orientation="vertical")
 
-        # Update function for the slider
-        def update(val):
-            alpha = slider.val
-            pcb_overlay.set_alpha(alpha)
-            heatmap.set_alpha(1 - alpha)  # Inverse transparency for the field strength
-            fig.canvas.draw_idle()
+            # Update function for the slider
+            def update(val):
+                alpha = slider.val
+                pcb_overlay.set_alpha(alpha)
+                heatmap.set_alpha(1 - alpha)  # Inverse transparency for the field strength
+                fig.canvas.draw_idle()
 
-        slider.on_changed(update)
+            slider.on_changed(update)
 
-        # Add a "Done" button to close the plot
-        ax_button = plt.axes([0.85, 0.02, 0.1, 0.05])  # Button at the bottom right
-        button = Button(ax_button, "Done", color="lightgray", hovercolor="gray")
+            # Add a "Done" button to close the plot
+            ax_button = plt.axes([0.85, 0.02, 0.1, 0.05])  # Button at the bottom right
+            button = Button(ax_button, "Done", color="lightgray", hovercolor="gray")
 
-        def close_plot(event):
-            plt.close(fig)  # Close the plot when the button is clicked
+            def close_plot(event):
+                plt.close(fig)  # Close the plot when the button is clicked
 
-        button.on_clicked(close_plot)
+            button.on_clicked(close_plot)
 
         # Save the plot as an image file if a save path is provided
         if save_path:
             plt.savefig(save_path, format="png", dpi=300)
             print(f"Plot saved to: {save_path}")
 
-        print("Displaying the plot...")  # Debug message
-        plt.show(block=True)  # Ensure the plot remains open until the user closes it
-        print("Plot closed.")  # Debug message
+        # Display the plot if no axis is provided
+        if ax is None:
+            print("Displaying the plot...")  # Debug message
+            plt.show(block=True)  # Ensure the plot remains open until the user closes it
+            print("Plot closed.")  # Debug message
 
     except FileNotFoundError:
         print(f"Error: File not found at path: {input_file}")  # Updated error message
@@ -192,7 +198,8 @@ def plot_field(input_file, pcb_image_path, save_path=None):
     except Exception as e:
         print(f"An unexpected error occurred while processing file {input_file}: {e}")  # Updated error message
     finally:
-        plt.close('all')  # Ensure all plots are closed
+        if ax is None:
+            plt.close('all')  # Ensure all plots are closed
 
 def compare_fields(input_file1, pcb_image1, input_file2, pcb_image2):
     """Compare two measurements side by side with the same scale."""
