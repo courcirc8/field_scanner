@@ -28,6 +28,7 @@ import matplotlib.pyplot as plt
 from measure_power import initialize_radio, receive_frame, get_power_dBm  # Import the updated functions
 from plot_field import plot_field  # Import the plotting function
 from d3d_printer import PrinterConnection  # Import the PrinterConnection class
+from matplotlib.widgets import RadioButtons  # Correct import for RadioButtons
 import time
 import tkinter as tk
 from tkinter import simpledialog
@@ -72,7 +73,7 @@ PRINTER_PORT = 23  # Default Telnet port for G-code communication
 SIMULATE_PRINTER = False  # Set to True to simulate the printer
 
 # Output configuration
-OUTPUT_FILE = "scan_v1a_400MHz_Rx_module1.json"
+OUTPUT_FILE = "scan_v1a_400MHz_Rx_pcb.json"
 DEBUG_MESSAGE = True  # Set to True to enable debug messages
 PCB_IMAGE_PATH = "./pcb_die.jpg"  # Path to the PCB image
 
@@ -187,8 +188,8 @@ def show_rotate_probe_dialog():
     root.title("Rotate Probe")
     root.geometry("400x200")
     
-    label = tk.Label(root, text="Please rotate probe by 90° and press Done", 
-                    font=("Helvetica", 12))
+    label = tk.Label(root, text="Please rotate probe by 90deg and press Done", 
+                    font=("Helvetica", 12))  # Replace ° with deg
     label.pack(pady=30)
     
     def on_done():
@@ -241,27 +242,39 @@ def plot_with_selector(file_0d, file_90d):
     with open(combined_file, 'w') as f:
         json.dump(data_combined, f)
     
-    # Create figure
-    fig = plt.figure(figsize=(10, 8))
-    ax = fig.add_subplot(111)
-    
-    # Add radio buttons for selection
-    rax = plt.axes([0.02, 0.7, 0.12, 0.15])
-    radio = plt.RadioButtons(rax, ('0° scan', '90° scan', 'Combined'))
-    
-    def update_plot(label):
-        ax.clear()
-        if label == '0° scan':
-            plot_field(file_0d, PCB_IMAGE_PATH)
-        elif label == '90° scan':
-            plot_field(file_90d, PCB_IMAGE_PATH)
-        else:
-            plot_field(combined_file, PCB_IMAGE_PATH)
-    
-    radio.on_clicked(update_plot)
-    update_plot('0° scan')  # Initial plot
-    plt.show()
+    # Initialize variables to track the current plot
+    current_plot = {"figure": None, "title": None}
 
+    # Function to plot the selected orientation
+    def plot_orientation(file_path, title):
+        # Close the previous plot if it exists
+        if current_plot["figure"] is not None:
+            plt.close(current_plot["figure"])
+        
+        # Plot the new orientation
+        current_plot["figure"] = plt.figure()
+        plot_field(file_path, PCB_IMAGE_PATH)  # Use the existing plot_field function
+        plt.gcf().suptitle(title, fontsize=14)  # Add a title to the plot
+        current_plot["title"] = title
+        plt.show(block=False)  # Keep the plot open without blocking
+
+    # Create a simple Tkinter window for angle selection
+    root = tk.Tk()
+    root.title("Select Scan Orientation")
+    root.geometry("300x250")
+
+    # Add buttons for each orientation
+    tk.Label(root, text="Select Scan Orientation:", font=("Helvetica", 12)).pack(pady=10)
+    tk.Button(root, text="0° Scan", font=("Helvetica", 12), command=lambda: [plot_orientation(file_0d, "0° Scan"), root.destroy()]).pack(pady=5)
+    tk.Button(root, text="90° Scan", font=("Helvetica", 12), command=lambda: [plot_orientation(file_90d, "90° Scan"), root.destroy()]).pack(pady=5)
+    tk.Label(root, text="Select Scan Orientation:", font=("Helvetica", 12)).pack(pady=10)
+    tk.Button(root, text="0° Scan", font=("Helvetica", 12), command=lambda: plot_orientation(file_0d, "0° Scan")).pack(pady=5)
+    tk.Button(root, text="90° Scan", font=("Helvetica", 12), command=lambda: plot_orientation(file_90d, "90° Scan")).pack(pady=5)
+    tk.Button(root, text="Combined", font=("Helvetica", 12), command=lambda: plot_orientation(combined_file, "Combined Scan")).pack(pady=5)
+    tk.Button(root, text="Done", font=("Helvetica", 12), command=lambda: [plt.close('all'), root.destroy()]).pack(pady=5)  # Add Done button
+
+    # Display the Tkinter window
+    root.mainloop()
 
 def adjust_head(printer, usrp, streamer):
     """
@@ -471,7 +484,7 @@ def scan_single_orientation(file_name, printer, usrp, streamer, x_offset, y_offs
         print("plot_field execution completed.")
 
 def scan_field(file_name):
-    """Perform both 0° and 90° scans."""
+    """Perform both 0deg and 90deg scans."""  # Replace ° with deg
     # Modify file names
     file_0d = file_name.replace('.json', '_0d.json')
     file_90d = file_name.replace('.json', '_90d.json')
@@ -573,21 +586,36 @@ def get_user_choice():
 
     return choice, file_name
 
+def display_scan(file_name):
+    """Display the scan results with or without angle selection."""
+    print(f"Debug: Entered display_scan with file_name: {file_name}")  # Debug message
+
+    # Remove the .json extension if it exists
+    base_name = file_name.rsplit('.json', 1)[0]
+    file_0d = base_name + '_0d.json'
+    file_90d = base_name + '_90d.json'
+
+    print(f"Debug: Checking for _0d.json file: {file_0d}")  # Debug message
+    print(f"Debug: Checking for _90d.json file: {file_90d}")  # Debug message
+
+    if os.path.exists(file_0d) and os.path.exists(file_90d):
+        # Both _0d and _90d files exist, use angle selector
+        print(f"Debug: Found both _0d.json and _90d.json files: {file_0d}, {file_90d}")  # Debug message
+        plot_with_selector(file_0d, file_90d)
+    elif os.path.exists(file_name):
+        # Use the provided file directly
+        print(f"Debug: Using provided file: {file_name}")  # Debug message
+        plot_field(file_name, PCB_IMAGE_PATH)
+    else:
+        # Neither the provided file nor _0d/_90d files exist
+        print(f"Error: File not found at path: {file_name}")  # Error message
+        print(f"Debug: Neither {file_0d} nor {file_90d} exist.")  # Debug message
+
 if __name__ == "__main__":
     choice, file_name = get_user_choice()
     
     if choice == "display":
-        if "_0d.json" in file_name or "_90d.json" in file_name:
-            # Display combined view for dual scans
-            base_name = file_name.replace('_0d.json', '').replace('_90d.json', '')
-            file_0d = base_name + '_0d.json'
-            file_90d = base_name + '_90d.json'
-            if os.path.exists(file_0d) and os.path.exists(file_90d):
-                plot_with_selector(file_0d, file_90d)
-            else:
-                plot_field(file_name, PCB_IMAGE_PATH)
-        else:
-            plot_field(file_name, PCB_IMAGE_PATH)
+        display_scan(file_name)
     elif choice == "scan":
         scan_field(file_name)
     else:
