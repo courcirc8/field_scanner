@@ -4,7 +4,18 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-"""Generate and TX samples using a set of waveforms, and waveform characteristics.
+"""
+Generate and TX samples using a set of waveforms, and waveform characteristics.
+
+This module provides a continuous wave (CW) transmitter using the USRP hardware.
+It's used to generate test signals at specified frequencies for measuring
+electromagnetic fields. The implementation focuses on reliable continuous
+transmission with appropriate error handling and cleanup.
+
+The module can be used independently to:
+1. Generate test signals for field scanner verification
+2. Create controlled EM environments for testing
+3. Provide a reference signal for calibration
 """
 
 import argparse
@@ -42,7 +53,22 @@ def parse_args():
 
 
 def multi_usrp_tx(args):
-    """multi_usrp based TX example."""
+    """
+    multi_usrp based TX example for continuous signal generation.
+    
+    This function:
+    1. Initializes the USRP hardware with the specified parameters
+    2. Creates a continuous transmission of the selected waveform
+    3. Maintains the transmission for the specified duration
+    4. Provides status updates and handles interruptions
+    5. Performs proper cleanup at the end of transmission
+    
+    The implementation focuses on reliable operation with appropriate
+    timeouts and error handling.
+    
+    Args:
+        args: Configuration arguments for the transmitter
+    """
     # Initialize USRP with timeout
     print("Initializing USRP...")
     usrp = uhd.usrp.MultiUSRP(args.args)
@@ -100,7 +126,16 @@ def multi_usrp_tx(args):
 
 
 def rfnoc_dram_tx(args):
-    """rfnoc_graph + replay-block based TX example."""
+    """
+    rfnoc_graph + replay-block based TX for advanced waveform generation.
+    
+    This function provides an alternative transmission method using the
+    RFNoC framework and DRAM for waveform storage. This allows for more
+    complex waveforms and precise timing control.
+    
+    Args:
+        args: Configuration arguments for the transmitter
+    """
     # Init graph
     graph = uhd.rfnoc.RfnocGraph(args.args)
     if graph.get_num_mboards() > 1:
@@ -237,7 +272,13 @@ def rfnoc_dram_tx(args):
 
 
 def main():
-    """TX CW signal at 400 MHz for 5 minutes."""
+    """
+    TX CW signal at 400 MHz for 5 minutes.
+    
+    This is a simplified entry point for generating a continuous wave
+    test signal with predefined parameters. It's used for quick testing
+    and verification of the field scanner system.
+    """
     class Args:
         args = ""
         waveform = "const"

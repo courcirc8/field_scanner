@@ -1,9 +1,18 @@
 """
 Test UHD Transmitter and Receiver
 
-This script transmits a continuous single tone at a specified frequency and power
-using a USRP device. Simultaneously, it receives frames and displays the FFT in dB
-in real time.
+This script provides a testing and verification utility for the USRP hardware.
+It simultaneously transmits a continuous tone and displays the received signal
+spectrum in real-time, allowing verification of:
+
+1. Transmitter functionality
+2. Receiver sensitivity and dynamic range
+3. Proper configuration of frequency and gain parameters
+4. End-to-end signal path integrity
+
+This tool is particularly useful for troubleshooting the field scanner hardware
+setup and verifying that the USRP is properly configured before performing
+actual field measurements.
 
 Configuration:
 - Frequency: 400 MHz
@@ -32,23 +41,37 @@ buffer_multiplier = 10  # Number of buffers to average
 
 def generate_tone(sample_rate, tone_freq, amplitude, duration=1.0):
     """
-    Generate a sine wave tone.
-
+    Generate a sine wave tone for transmission.
+    
+    Creates a complex exponential (sine wave) with the specified parameters,
+    which can be used as a test signal for field measurements.
+    
     Args:
-        sample_rate (float): Sample rate in samples per second.
-        tone_freq (float): Frequency of the tone in Hz.
-        amplitude (float): Amplitude of the tone (0 to 1).
-        duration (float): Duration of the tone in seconds.
-
+        sample_rate: Sample rate in samples per second
+        tone_freq: Frequency of the tone in Hz
+        amplitude: Amplitude of the tone (0 to 1)
+        duration: Duration of the tone in seconds
+        
     Returns:
-        np.ndarray: Array containing the generated tone samples.
+        NumPy array containing the generated tone samples
     """
     t = np.arange(0, duration, 1 / sample_rate)
     tone = amplitude * np.exp(2j * np.pi * tone_freq * t)  # Complex sine wave
     return tone.astype(np.complex64)
 
 def transmit(tx_streamer, tone, tx_metadata, stop_event):
-    """Transmit the tone continuously in a separate thread."""
+    """
+    Transmit the tone continuously in a separate thread.
+    
+    This function handles the continuous transmission of the test signal,
+    managing buffer sizes and error conditions for reliable operation.
+    
+    Args:
+        tx_streamer: USRP TX streamer object
+        tone: Waveform samples to transmit
+        tx_metadata: Transmission metadata
+        stop_event: Threading event to signal transmission stop
+    """
     chunk_size = min(tx_streamer.get_max_num_samps(), 1024)  # Limit chunk size
     print(f"Using chunk size: {chunk_size}")
     
@@ -65,7 +88,18 @@ def transmit(tx_streamer, tone, tx_metadata, stop_event):
             time.sleep(0.1)  # Back off on error
 
 def receive(rx_streamer, rx_metadata, sample_queue, stop_event):
-    """Receive samples and put them into a queue."""
+    """
+    Receive samples and put them into a queue for processing.
+    
+    This function continuously receives samples from the USRP and
+    places them in a queue for FFT calculation and display.
+    
+    Args:
+        rx_streamer: USRP RX streamer object
+        rx_metadata: Reception metadata
+        sample_queue: Queue for passing samples to processing thread
+        stop_event: Threading event to signal reception stop
+    """
     max_samps = min(rx_streamer.get_max_num_samps(), 2048)
     buffer = np.zeros(max_samps, dtype=np.complex64)
     
@@ -82,7 +116,18 @@ def receive(rx_streamer, rx_metadata, sample_queue, stop_event):
             print(f"Rx Error: {e}")
 
 def plot_fft(sample_queue, fft_size, sample_rate, stop_event):
-    """Plot the FFT of received samples in real time."""
+    """
+    Plot the FFT of received samples in real time.
+    
+    This function provides a real-time spectrum display of the received
+    signal, with averaging for a more stable visualization.
+    
+    Args:
+        sample_queue: Queue containing received samples
+        fft_size: Size of the FFT calculation
+        sample_rate: Sample rate for frequency axis scaling
+        stop_event: Threading event to signal plot thread stop
+    """
     plt.ion()
     fig = plt.figure(figsize=(10, 6))
     ax = fig.add_subplot(111)
@@ -129,6 +174,15 @@ def plot_fft(sample_queue, fft_size, sample_rate, stop_event):
             plt.pause(0.05)
 
 def main():
+    """
+    Main function that initializes hardware and coordinates threads.
+    
+    This function:
+    1. Configures the USRP for simultaneous transmission and reception
+    2. Starts transmission and reception threads
+    3. Handles the FFT plot visualization
+    4. Manages proper cleanup on exit
+    """
     # Create a USRP device
     usrp = uhd.usrp.MultiUSRP()
 

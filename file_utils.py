@@ -1,3 +1,13 @@
+# This module handles data storage, retrieval, and processing for scan results.
+# It includes functions for:
+# 1. Saving scan results to JSON files
+# 2. Loading and processing previous scan data
+# 3. Combining perpendicular scan orientations into a comprehensive field map
+# 4. Providing user interfaces for file selection and scan control
+#
+# The module is designed to maintain consistent file naming conventions and
+# support both single-orientation and dual-orientation (0° and 90°) scans.
+
 import json
 import os
 import numpy as np  # Import numpy for array operations
@@ -6,11 +16,15 @@ import tkinter as tk  # Import tkinter for GUI dialogs
 def save_scan_results(filename, results, metadata=None):
     """
     Save scan results to a JSON file with optional metadata.
-
+    
+    This function stores both the raw measurement data and metadata about
+    the scan conditions, hardware settings, and PCB information. The metadata
+    is crucial for interpreting the results later and ensuring reproducibility.
+    
     Args:
-        filename (str): The name of the file to save the results.
-        results (list): The scan results as a list of dictionaries.
-        metadata (dict): Optional metadata to include in the file.
+        filename: Output file path
+        results: List of scan points with field strength measurements
+        metadata: Dictionary of scan parameters and settings
     """
     data = {
         "metadata": metadata or {},  # Include metadata if provided
@@ -24,7 +38,27 @@ def save_scan_results(filename, results, metadata=None):
         print(f"Error saving scan results to {filename}: {e}")
 
 def combine_scans(file_0d, file_90d):
-    """Combine two perpendicular scans using sqrt(x²+y²)."""
+    """
+    Combine two perpendicular scans to create a more complete field map.
+    
+    This function implements the mathematical combination of orthogonal field 
+    components. It:
+    1. Loads both 0° and 90° scan data
+    2. Converts field strength from dBm to linear power
+    3. Combines values using sqrt(x²+y²) for amplitude
+    4. Converts back to dBm for consistent visualization
+    
+    This is important for creating a complete picture of the field, particularly
+    with linearly polarized antennas that might miss components not aligned with
+    the antenna orientation.
+    
+    Args:
+        file_0d: Path to 0° orientation scan results
+        file_90d: Path to 90° orientation scan results
+        
+    Returns:
+        Dictionary with combined scan data ready for saving or visualization
+    """
     with open(file_0d, 'r') as f:
         data_0d = json.load(f)
     with open(file_90d, 'r') as f:
@@ -52,7 +86,22 @@ def combine_scans(file_0d, file_90d):
     return {"metadata": data_0d["metadata"], "results": combined_results}
 
 def display_scan(file_name, pcb_image_path):
-    """Display the scan results with or without angle selection."""
+    """
+    Determine how to display scan results based on available files.
+    
+    This function handles the logic for determining whether to display:
+    1. A single scan file directly
+    2. Multiple orientation scans with a selector interface
+    
+    It also provides helpful debug information about file paths and availability.
+    
+    Args:
+        file_name: Base path for scan results
+        pcb_image_path: Path to the PCB image overlay
+        
+    Returns:
+        Tuple of (primary_file, secondary_file, has_both_orientations)
+    """
     print(f"Debug: Entered display_scan with file_name: {file_name}")  # Debug message
 
     # Remove the .json extension if it exists
@@ -80,7 +129,20 @@ def display_scan(file_name, pcb_image_path):
         return None, None, False  # Return None and a flag indicating no files exist
 
 def get_user_choice(default_output_file):
-    """Display a popup window to choose between displaying a previous scan or making a new scan."""
+    """
+    Display a popup window to choose between displaying a previous scan or making a new scan.
+    
+    This function creates a simple GUI that:
+    1. Prompts the user to enter a file name
+    2. Offers options to view an existing scan or create a new one
+    3. Returns the choice and filename for further processing
+    
+    Args:
+        default_output_file: Default file name to show in the entry field
+        
+    Returns:
+        Tuple of (choice, file_name) where choice is either "display" or "scan"
+    """
     import tkinter as tk
 
     def on_display_previous():
@@ -133,7 +195,13 @@ def get_user_choice(default_output_file):
     return choice, file_name
 
 def show_rotate_probe_dialog():
-    """Show a dialog asking the user to rotate the probe."""
+    """
+    Show a dialog asking the user to rotate the probe by 90 degrees.
+    
+    This function is called between the 0° and 90° scans to instruct
+    the user to physically rotate the probe. The workflow pauses until
+    the user confirms the rotation is complete.
+    """
     root = tk.Tk()
     root.title("Rotate Probe")
     root.geometry("400x200")

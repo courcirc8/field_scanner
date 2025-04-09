@@ -1,29 +1,57 @@
+# This module contains utilities for controlling the 3D printer used as a positioning system.
+# It provides functions for sending G-code commands and a graphical interface for
+# precisely adjusting the probe position over the PCB.
+#
+# The key challenge addressed here is providing precise manual positioning control
+# while simultaneously displaying real-time signal strength from the USRP.
+
 import tkinter as tk
 import threading
 import time
-import numpy as np  # Missing import for NumPy
-from radio_utils import get_power_dBm  # Missing import for get_power_dBm
+import numpy as np
+from radio_utils import get_power_dBm
 
 def send_gcode_command(command, printer_socket):
-    """Send a G-code command to the 3D printer."""
+    """
+    Send a G-code command to the 3D printer and retrieve the response.
+    
+    This is a low-level function that handles the communication protocol
+    with the 3D printer's control interface.
+    
+    Args:
+        command: G-code command string
+        printer_socket: Connected socket to the printer
+        
+    Returns:
+        Response string from the printer
+    """
     printer_socket.sendall((command + "\n").encode())
     response = printer_socket.recv(1024).decode()
     return response
 
 def adjust_head(printer, usrp, streamer):
     """
-    Adjust the printer head position (X, Y, Z) and allow the user to set the offsets for probing.
-    Includes real-time radio power measurement and display.
-
-    :param printer: PrinterConnection object.
-    :param usrp: USRP object for power measurement.
-    :param streamer: Streamer object for power measurement.
-    :return: Final X, Y, Z offsets to be used for probing.
+    Interactive graphical tool for precise probe positioning.
+    
+    This function creates a GUI with the following features:
+    1. Buttons to move to pre-defined PCB corners
+    2. Fine control of X, Y, and Z positioning
+    3. Real-time display of signal strength to aid positioning
+    4. Visualization of the current position
+    
+    The function provides all the tools necessary to align the probe with 
+    the PCB before starting a scan. It's a critical step for ensuring accurate
+    measurements, especially when scanning at different orientations that
+    require probe rotation.
+    
+    Args:
+        printer: Connected PrinterConnection object
+        usrp: Initialized USRP radio object
+        streamer: USRP streamer object
+        
+    Returns:
+        Tuple of (x_offset, y_offset, z_height) representing the final probe position
     """
-    import tkinter as tk
-    import threading
-    import time
-
     # Ensure the printer is in absolute positioning mode
     printer.send_gcode("G90")  # Set absolute positioning
 

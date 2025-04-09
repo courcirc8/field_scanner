@@ -1,21 +1,22 @@
 """
 Field Visualization Module
 
-This script visualizes the EM field strength recorded by the field scanner. It reads 
-the results from a JSON file, reshapes the data into a grid, and generates a heatmap 
-plot with proper scaling and aspect ratio.
+This module provides advanced visualization tools for electromagnetic field scans.
+It processes scan data and creates visualizations with PCB image overlays.
 
-Implemented Features:
-- Loading scan results from a JSON file.
-- Reshaping data into a grid for plotting.
-- Heatmap plot generation with a colorbar and proper aspect ratio.
-- User prompt to close the plot after visualization.
-- Overlaying the PCB image with transparency adjustment.
+Key features include:
+- Loading scan results from JSON files with metadata
+- Creating heatmap visualizations of field strength
+- Overlaying PCB images for reference
+- Interactive transparency adjustment
+- Support for single and comparative visualizations
+- Metadata display for context
 
-Missing Features:
-- Advanced visualization options (e.g., 3D plots or interactive plots).
-- Support for exporting plots to image files (e.g., PNG, PDF).
-- Error handling for invalid or missing input files.
+The implementation addresses several visualization challenges:
+1. Interpolation of sparse measurement points into a smooth field map
+2. Proper alignment of field data with PCB image
+3. Interactive controls for exploring the data
+4. Handling both single measurements and comparisons
 """
 
 import json
@@ -36,7 +37,30 @@ SECOND_INPUT_FILE = "./scan_v1a_400MHz_Rx_module2_nores_patched.json"
 SECOND_PCB_IMAGE_PATH = "./pcb_die.jpg"
 
 def plot_field(input_file, pcb_image_path, save_path=None, ax=None, vmin=None, vmax=None):
-    """Plot the EM field strength from the scan results with PCB overlay and transparency adjustment."""
+    """
+    Plot the EM field strength from scan results with PCB overlay and transparency adjustment.
+    
+    This is the primary visualization function that:
+    1. Loads scan data and metadata from a JSON file
+    2. Processes the raw points into a continuous field visualization
+    3. Overlays the PCB image with adjustable transparency
+    4. Displays metadata and measurement information
+    
+    The function can operate in two modes:
+    - Standalone mode (ax=None): Creates a complete figure with interactive controls
+    - Embedded mode (ax provided): Renders on an existing axis for integration
+      with more complex visualization tools
+    
+    Args:
+        input_file: Path to the scan results file
+        pcb_image_path: Path to the PCB image overlay
+        save_path: Optional path to save the generated image
+        ax: Optional existing matplotlib axis to plot on
+        vmin/vmax: Optional min/max values for consistent color scale
+        
+    Returns:
+        Dictionary of plot objects when in embedded mode, None otherwise
+    """
     try:
         print(f"Loading scan results from: {input_file}")  # Debug message
         # Load scan results
@@ -212,7 +236,24 @@ def plot_field(input_file, pcb_image_path, save_path=None, ax=None, vmin=None, v
         return None  # Return None if there was an error
 
 def compare_fields(input_file1, pcb_image1, input_file2, pcb_image2):
-    """Compare two measurements side by side with the same scale."""
+    """
+    Compare two measurements side by side with the same color scale.
+    
+    This function creates a side-by-side comparison visualization that:
+    1. Loads two different scan results files
+    2. Processes and displays them with consistent scaling
+    3. Shows metadata for both scans
+    4. Provides interactive transparency adjustment
+    
+    This is particularly useful for comparing:
+    - Before/after modifications to a PCB
+    - Different frequencies on the same PCB
+    - Same PCB with different components populated
+    
+    Args:
+        input_file1/input_file2: Paths to the scan results files
+        pcb_image1/pcb_image2: Paths to the corresponding PCB images
+    """
     try:
         print(f"Loading first scan results from: {input_file1}")
         with open(input_file1, "r") as f1:

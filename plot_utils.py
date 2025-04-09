@@ -1,7 +1,17 @@
+# This module provides visualization tools for electromagnetic field measurements.
+# It includes functions for:
+# 1. Creating interactive plots for real-time scanning
+# 2. Updating plots during scanning process
+# 3. Displaying results with selectable scan orientations (0° and 90°)
+#
+# A major challenge addressed in this module is the visualization of different field
+# orientations (0° and 90°) and allowing the user to switch between them while
+# maintaining a consistent color scale and transparent PCB overlay.
+
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, Button
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
-from matplotlib.colorbar import Colorbar  # Add this import for colorbar detection
+from matplotlib.colorbar import Colorbar  # Import for colorbar detection
 from plot_field import plot_field
 import tkinter as tk
 import os
@@ -12,7 +22,11 @@ from scipy.interpolate import griddata
 from PIL import Image
 
 def initialize_plot():
-    """Initialize the interactive plot."""
+    """
+    Initialize the interactive plot for real-time scanning visualization.
+    Creates a figure, axis, contour plot, and colorbar for displaying field strength.
+    Used during the scanning process to provide immediate feedback.
+    """
     plt.ion()  # Turn on interactive mode
     fig, ax = plt.subplots(figsize=(8, 6))
     ax.set_xlabel("X (cm)")
@@ -29,7 +43,21 @@ def initialize_plot():
     return fig, ax, contour, colorbar
 
 def update_plot(ax, contour, colorbar, results, x_values, y_values):
-    """Update the plot with new data."""
+    """
+    Update the plot with new data during the scanning process.
+    This function is called after each row is scanned to provide real-time visualization.
+    
+    Args:
+        ax: The matplotlib axis to plot on
+        contour: The existing contour plot to update
+        colorbar: The colorbar to update
+        results: List of measurement points with field strengths
+        x_values: List of x coordinate values
+        y_values: List of y coordinate values
+        
+    Returns:
+        Updated contour plot object
+    """
     x = [point["x"] for point in results]
     y = [point["y"] for point in results]
     field_strength = [point["field_strength"] for point in results]
@@ -58,7 +86,24 @@ def update_plot(ax, contour, colorbar, results, x_values, y_values):
     return contour
 
 def plot_with_selector(file_0d, file_90d):
-    """Plot results with angle selector."""
+    """
+    Plot results with angle selector for switching between 0°, 90°, and combined views.
+    
+    This function creates an integrated UI with:
+    - A control panel on the left for selecting scan orientation
+    - An interactive visualization on the right showing field strength
+    - A transparency slider to adjust PCB overlay visibility
+    
+    The implementation takes special care to:
+    1. Use a consistent color scale across all views
+    2. Maintain a single colorbar to avoid duplication
+    3. Allow real-time adjustment of transparency
+    4. Properly clean up resources when switching views
+    
+    Args:
+        file_0d: Path to the 0° scan results file
+        file_90d: Path to the 90° scan results file
+    """
     # Load data files
     with open(file_0d, 'r') as f:
         data_0d = json.load(f)

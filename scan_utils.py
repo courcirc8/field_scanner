@@ -1,3 +1,15 @@
+# This module contains the core scanning functionality for measuring electromagnetic fields.
+# It orchestrates the movement of the 3D printer probe and the acquisition of field measurements
+# from the USRP radio at each position in the scan grid.
+#
+# The scanning process follows these steps:
+# 1. Connect to the 3D printer and USRP radio
+# 2. Allow the user to adjust the probe position
+# 3. Scan in a raster pattern at the first orientation (0°)
+# 4. Prompt the user to rotate the probe by 90°
+# 5. Perform a second scan at the perpendicular orientation (90°)
+# 6. Visualize the results
+
 from printer_utils import adjust_head
 from radio_utils import measure_field_strength, initialize_radio
 from file_utils import save_scan_results
@@ -7,7 +19,28 @@ from file_utils import show_rotate_probe_dialog
 from config import x_values, y_values, PCB_IMAGE_PATH, CENTER_FREQUENCY, RX_GAIN, nb_avera, EQUIVALENT_BW, PRINTER_IP, PRINTER_PORT  # Import constants from config
 
 def scan_single_orientation(file_name, printer, usrp, streamer, x_offset, y_offset, z_height):
-    """Perform single scan with adjusted head position."""
+    """
+    Perform a single orientation scan across the defined grid.
+    
+    This function performs a raster scan, moving the probe in a pattern that:
+    1. Scans each row from minimum to maximum X
+    2. Advances to the next Y position
+    3. Shows real-time updates of the scan progress
+    
+    For each position, it:
+    1. Moves the 3D printer head to the specified coordinates
+    2. Measures the field strength using the USRP radio
+    3. Records the measurement and updates the visualization
+    
+    Args:
+        file_name: Output file for the scan results
+        printer: Connected PrinterConnection object
+        usrp: Initialized USRP radio object
+        streamer: USRP streamer object
+        x_offset: X-axis offset for the probe in mm
+        y_offset: Y-axis offset for the probe in mm
+        z_height: Z-axis height for the probe in mm
+    """
     results = []
 
     try:
@@ -68,7 +101,22 @@ def scan_single_orientation(file_name, printer, usrp, streamer, x_offset, y_offs
         print("plot_field execution completed.")
 
 def scan_field(file_name):
-    """Perform both 0° and 90° scans."""
+    """
+    Perform both 0° and 90° scans to capture the complete field.
+    
+    This is the main scanning function that:
+    1. Initializes hardware connections
+    2. Guides the user through the complete measurement process
+    3. Performs scans at both orientations
+    4. Saves and visualizes the results
+    
+    The dual orientation approach allows for capturing both components of the
+    electromagnetic field, which provides a more complete understanding of field
+    distribution and polarization effects.
+    
+    Args:
+        file_name: Base file name for saving results (will be appended with _0d and _90d)
+    """
     # Modify file names
     file_0d = file_name.replace('.json', '_0d.json')
     file_90d = file_name.replace('.json', '_90d.json')
