@@ -66,3 +66,33 @@ To visualize current directions:
 2. Load the data using the selector interface
 3. Click the "Show Currents" button
 4. The resulting streamlines represent estimated current flow patterns on the PCB
+
+### Alternative Field Orientation Method
+
+An alternative approach for calculating field orientation uses a more conventional vector angle formula with the 45° measurement specifically for resolving phase ambiguity:
+
+1. **Basic Vector Angle**:
+   - First calculate the preliminary angle using standard vector components:
+     θ_prelim = arctan2(B₉₀, B₀)
+   - This gives the basic orientation of the field vector from orthogonal components.
+
+2. **Phase Ambiguity Resolution**:
+   - The arctan2 function has a 180° ambiguity that the 45° measurement can resolve.
+   - Calculate expected 45° component based on the preliminary angle:
+     B₄₅_expected = (B₀ + B₉₀)/√2
+   - Compare with actual 45° measurement to determine if angle needs correction:
+     If (B₄₅ · B₄₅_expected) < 0:
+       θ_corrected = θ_prelim + π
+     Else:
+       θ_corrected = θ_prelim
+
+3. **Complete Formula**:
+   - θ = arctan2(B₉₀, B₀) + π · step(-B₄₅ · ((B₀ + B₉₀)/√2))
+   - Where step(x) is 1 for x > 0 and 0 for x ≤ 0
+
+4. **Advantages**:
+   - More intuitive separation between angle calculation and ambiguity resolution
+   - May be more robust when B₄₅ values are very small
+   - Clearer relationship to classical vector angle calculations
+
+This approach may provide improved results in certain scenarios, especially where the 45° component is weak or noisy. The current direction calculation (steps 5-6 in the Implementation Process) remains the same regardless of which angle estimation method is used.

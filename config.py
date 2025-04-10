@@ -41,13 +41,18 @@ SIMULATE_USRP = False  # Set to True to run without actual USRP hardware for tes
 
 # Debug settings
 DEBUG_ALL = False  # Set to True to enable verbose debug output throughout scanning
+DEBUG_INTERRACTIVE = True  # If True, print debug commands and update graphical view after each measurement
+
+# USRP buffer and movement settings
+MOVEMENT_SETTLE_DELAY = 0.05  # Delay after movement (in seconds) to allow mechanics to stabilize
+BUFFER_FLUSH_COUNT = 3  # Number of samples to discard before taking measurement to clear stale data
 
 # Output configuration
-PCB_IMAGE_PATH = "./pcb_die.jpg"  # Path to the PCB image
-OUTPUT_FILE = "scan_v1a_400MHz_Rx_pcb_large.json"  # Default output file name
+PCB_IMAGE_PATH = "./pcb_large_1.jpg"  # Path to the PCB image
+OUTPUT_FILE = "scan_v1a_400MHz_Rx_pcb_large2.json"  # Default output file name
 
 # Visualization configuration
-VERTICAL_FLIP = True  # Whether to flip the PCB image vertically for proper alignment
+VERTICAL_FLIP = True # Whether to flip the PCB image vertically for proper alignment
 HORIZONTAL_FLIP = False  # Whether to flip the PCB image horizontally
 
 # Current visualization settings

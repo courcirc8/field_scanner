@@ -207,6 +207,7 @@ def show_currents(event):
     3. Computes field orientation angles using the relative strength at different orientations
     4. Calculates the total field intensity using the 0° and 90° measurements
     5. Generates streamlines to visualize the current flow patterns
+6. Saves the visualization as a PNG image with "_current.jpg" suffix
     
     The orientation angle calculation uses arctan2(B_90 - B_0, B_45) where:
     - B_0: Field strength at 0° (linear scale)
@@ -336,6 +337,19 @@ def show_currents(event):
         )
         plot_ax.set_xlim(min(x) * 100, max(x) * 100)
         plot_ax.set_ylim(min(y) * 100, max(y) * 100)
+
+        # Save the visualization as an image
+        # Generate output filename by replacing the extension with "_current.jpg"
+        output_filename = os.path.splitext(file_0d)[0] + "_current.jpg"
+        
+        # Make sure the figure is properly rendered before saving
+        fig.canvas.draw_idle()
+        
+        # Save the figure with high resolution
+        fig.savefig(output_filename, dpi=300, bbox_inches='tight')
+        print(f"Current visualization saved to: {output_filename}")
+        
+        # Continue with the display update
         fig.canvas.draw_idle()
         print("Streamlines displayed.")
     except ValueError as e:
@@ -469,6 +483,19 @@ def show_alt_currents(event):
         )
         plot_ax.set_xlim(min(x) * 100, max(x) * 100)
         plot_ax.set_ylim(min(y) * 100, max(y) * 100)
+
+        # Save the visualization as an image
+        # Generate output filename by replacing the extension with "_altcurrent.jpg"
+        output_filename = os.path.splitext(file_0d)[0] + "_altcurrent.jpg"
+        
+        # Make sure the figure is properly rendered before saving
+        fig.canvas.draw_idle()
+        
+        # Save the figure with high resolution
+        fig.savefig(output_filename, dpi=300, bbox_inches='tight')
+        print(f"Alternative current visualization saved to: {output_filename}")
+        
+        # Continue with the display update
         fig.canvas.draw_idle()
         print("Alternative streamlines displayed.")
     except ValueError as e:

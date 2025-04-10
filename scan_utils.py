@@ -18,10 +18,12 @@ from file_utils import save_scan_results, combine_scans
 from plot_utils import initialize_plot, update_plot, plot_field, plot_with_selector
 from d3d_printer import PrinterConnection
 from file_utils import show_rotate_probe_dialog, show_rotate_probe_dialog_45
-from config import x_values, y_values, PCB_IMAGE_PATH, CENTER_FREQUENCY, RX_GAIN, nb_avera, EQUIVALENT_BW, PRINTER_IP, PRINTER_PORT, SIMULATE_USRP, PCB_SIZE_CM, RESOLUTION, DEBUG_ALL
-import matplotlib.pyplot as plt  # Add this import for plt.close()
-import time  # Import for adding delays
-import gc  # Import for garbage collection
+from config import (x_values, y_values, PCB_IMAGE_PATH, CENTER_FREQUENCY, RX_GAIN, nb_avera, 
+                  EQUIVALENT_BW, PRINTER_IP, PRINTER_PORT, SIMULATE_USRP, PCB_SIZE_CM, 
+                  RESOLUTION, DEBUG_ALL, DEBUG_INTERRACTIVE, MOVEMENT_SETTLE_DELAY, BUFFER_FLUSH_COUNT)
+import matplotlib.pyplot as plt
+import time
+import gc
 
 def scan_single_orientation(file_name, printer, usrp, streamer, x_offset, y_offset, z_height):
     """
@@ -53,31 +55,56 @@ def scan_single_orientation(file_name, printer, usrp, streamer, x_offset, y_offs
 
     try:
         # Initialize the interactive plot with a more descriptive title
-        fig, ax, contour, colorbar = initialize_plot()
-        orientation = "0°"
-        if "_45d" in file_name:
-            orientation = "45°"
-        elif "_90d" in file_name:
-            orientation = "90°"
-        fig.canvas.manager.set_window_title(f"Measuring board with {orientation} probe angle")
+        # Only create interactive plot if DEBUG_INTERRACTIVE is True
+        if DEBUG_INTERRACTIVE:
+            fig, ax, contour, colorbar = initialize_plot()
+            orientation = "0°"
+            if "_45d" in file_name:
+                orientation = "45°"
+            elif "_90d" in file_name:
+                orientation = "90°"
+            fig.canvas.manager.set_window_title(f"Measuring board with {orientation} probe angle")
+            print(f"Interactive plot initialized for {orientation} orientation")
         
         # Main scanning loop
         for y_idx, y in enumerate(y_values):
             for x_idx, x in enumerate(x_values):
                 # Move the probe to the (x, y) position using the adjusted Z height
-                # IMPORTANT: Be careful when editing string literals - ensure they are properly closed
-                if DEBUG_ALL or not first_line_complete:
+                if DEBUG_ALL or DEBUG_INTERRACTIVE or not first_line_complete:
                     print(f"Moving probe to X={x:.3f}, Y={y:.3f}, Z={z_height:.3f}")
-                printer.move_probe(x=(x * 10) + x_offset, y=(y * 10) + y_offset, z=z_height, debug=(DEBUG_ALL or not first_line_complete))
-
-                # Measure the field strength - fix argument count
+                
+                printer.move_probe(x=(x * 10) + x_offset, y=(y * 10) + y_offset, z=z_height, 
+                                  debug=(DEBUG_ALL or DEBUG_INTERRACTIVE or not first_line_complete))
+                
+                # Send M400 command to wait for all movements to complete
+                printer.send_gcode("M400")
+                if DEBUG_ALL or DEBUG_INTERRACTIVE:
+                    print("Waiting for printer movement to complete (M400)")
+                
+                # Add a small delay to allow mechanics to settle and USRP buffer to stabilize
+                time.sleep(MOVEMENT_SETTLE_DELAY)
+                
+                # Flush USRP buffer by taking and discarding measurements
+                if not SIMULATE_USRP and streamer is not None:
+                    for _ in range(BUFFER_FLUSH_COUNT):
+                        try:
+                            # Discard measurement to flush buffer
+                            _ = measure_field_strength(streamer, RX_GAIN, debug=False)
+                        except Exception as e:
+                            if DEBUG_ALL or DEBUG_INTERRACTIVE:
+                                print(f"Buffer flush attempt failed: {e}")
+                
+                # Measure the field strength
                 try:
-                    # Only pass the required arguments (streamer and rx_gain)
-                    field_strength = measure_field_strength(streamer, RX_GAIN, debug=(DEBUG_ALL or not first_line_complete))
+                    # Take actual measurement after buffer flush
+                    field_strength = measure_field_strength(streamer, RX_GAIN, 
+                                                          debug=(DEBUG_ALL or DEBUG_INTERRACTIVE or not first_line_complete))
                     if field_strength is not None:
                         power_values.append(field_strength)
+                        if DEBUG_INTERRACTIVE:
+                            print(f"Measured field strength: {field_strength:.2f} dBm")
                 except Exception as e:
-                    if DEBUG_ALL or not first_line_complete:
+                    if DEBUG_ALL or DEBUG_INTERRACTIVE or not first_line_complete:
                         print(f"Error measuring field strength: {e}")
                     field_strength = None
 
@@ -88,11 +115,15 @@ def scan_single_orientation(file_name, printer, usrp, streamer, x_offset, y_offs
                         "field_strength": float(field_strength)
                     })
                 else:
-                    if DEBUG_ALL or not first_line_complete:
+                    if DEBUG_ALL or DEBUG_INTERRACTIVE or not first_line_complete:
                         print(f"Warning: No field strength measured at X={x:.3f}, Y={y:.3f}")
 
-            # Update the plot after completing each X line
-            contour = update_plot(ax, contour, colorbar, results, x_values, y_values)
+            # Update the plot after completing each X line, but only if interactive mode is enabled
+            if DEBUG_INTERRACTIVE and fig is not None:
+                contour = update_plot(ax, contour, colorbar, results, x_values, y_values)
+                print(f"Updated plot after completing row {y_idx+1}/{len(y_values)} (y={y:.3f})")
+            elif DEBUG_ALL or not first_line_complete:
+                print(f"Completed row {y_idx+1}/{len(y_values)} (y={y:.3f})")
             
             # Calculate and display average power after first line is complete
             if not first_line_complete:
@@ -104,11 +135,13 @@ def scan_single_orientation(file_name, printer, usrp, streamer, x_offset, y_offs
                     print(f"Average power: {avg_power:.2f} dBm")
                     print(f"Number of valid measurements: {len(power_values)}/{len(x_values)}")
                     print(f"Min power: {min(power_values):.2f} dBm, Max power: {max(power_values):.2f} dBm")
-                    print(f"=== DEBUG OUTPUT REDUCED ===\n")
+                    if not DEBUG_INTERRACTIVE and not DEBUG_ALL:
+                        print(f"=== DEBUG OUTPUT REDUCED ===\n")
                 else:
                     print("\n=== WARNING: NO VALID POWER MEASUREMENTS IN FIRST LINE ===")
                     print("Check USRP connection, gain settings, and transmitter status")
-                    print("=== DEBUG OUTPUT REDUCED ===\n")
+                    if not DEBUG_INTERRACTIVE and not DEBUG_ALL:
+                        print("=== DEBUG OUTPUT REDUCED ===\n")
 
     except KeyboardInterrupt:
         print("\nScan interrupted by user. Cleaning up...")
@@ -128,10 +161,10 @@ def scan_single_orientation(file_name, printer, usrp, streamer, x_offset, y_offs
         else:
             print("No results to save.")
             
-        # Close the plot window
-        if fig is not None:
+        # Close the plot window if it was created
+        if fig is not None and DEBUG_INTERRACTIVE:
             plt.close(fig)
-            print("Closed scan window")
+            print("Closed interactive scan window")
 
 def scan_field(file_name):
     """
