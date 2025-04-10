@@ -11,7 +11,7 @@ import time
 import numpy as np
 import uhd  # Add uhd import here
 from radio_utils import get_power_dBm
-from config import RX_GAIN, DEFAULT_Z  # Import RX_GAIN and DEFAULT_Z from config
+from config import RX_GAIN, DEFAULT_Z, PCB_SIZE_CM, MAX_HEIGHT_COMPONENT_X_MM, MAX_HEIGHT_COMPONENT_Y_MM  # Import additional constants
 
 def send_gcode_command(command, printer_socket):
     """
@@ -62,11 +62,13 @@ def adjust_head(printer, usrp, streamer):
     y_offset = 0.0  # Y-axis offset in mm
     z_height = DEFAULT_Z  # Use the default Z height from config.py instead of hardcoded value
     z_lift = 1  # Use the defined lift height
+    
+    # Use PCB size from config.py, converting from cm to mm
     pcb_corners = {
-        "Upper Left": (0, 15.3),
-        "Upper Right": (21.65, 15.3),
+        "Upper Left": (0, PCB_SIZE_CM[1] * 10),
+        "Upper Right": (PCB_SIZE_CM[0] * 10, PCB_SIZE_CM[1] * 10),
         "Bottom Left": (0, 0),
-        "Bottom Right": (21.65, 0),
+        "Bottom Right": (PCB_SIZE_CM[0] * 10, 0),
     }
 
     def move_to_corner(corner):
@@ -79,8 +81,8 @@ def adjust_head(printer, usrp, streamer):
 
     def move_to_max_height():
         """Move the probe to the highest component position."""
-        x = 4.44  # Convert to mm
-        y = 3.7  # Convert to mm
+        x = MAX_HEIGHT_COMPONENT_X_MM  # Use constant from config.py
+        y = MAX_HEIGHT_COMPONENT_Y_MM  # Use constant from config.py
         # Lift the probe to a safe height before moving in X-Y
         printer.move_probe(x=0, y=0, z=z_height + z_lift, feedrate=3000)  # Lift Z first
         printer.move_probe(x=x + x_offset, y=y + y_offset, z=z_height + z_lift, feedrate=3000)  # Travel to the max height position

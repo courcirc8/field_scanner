@@ -271,7 +271,10 @@ def show_currents(event):
         # Compute the orientation of the field (angle estimation)
         # The formula arctan2(B_90-B_0, B_45) estimates the field orientation
         # based on the relative strength of the field measured at different probe angles
-        angle = np.arctan2(field_90 - field_0, field_45)
+        #angle = np.arctan2(field_90 - field_0, field_45)
+
+        # Corrected formula with 45° (π/4 radians) offset added
+        angle = np.arctan2(field_90 - field_0, field_45) + (np.pi / 4)
 
         # Compute the field intensity using only 0° and 90°
         # The intensity is calculated as the magnitude of the combined orthogonal components
@@ -337,6 +340,139 @@ def show_currents(event):
         print("Streamlines displayed.")
     except ValueError as e:
         print(f"Error processing current directions: {e}")
+
+# Add this function to calculate currents using the alternative method:
+
+def show_alt_currents(event):
+    """Display current directions using the alternative angle estimation formula."""
+    print("Computing current directions using alternative method...")
+
+    # Access the figure and required file paths 
+    try:
+        fig = event.inaxes.figure
+        plot_ax = fig.main_plot_ax  # Use the stored reference to the main plot axes
+        
+        # Get file paths stored in the figure object
+        file_0d = fig.file_0d
+        file_90d = fig.file_90d
+        file_45d = fig.file_45d if hasattr(fig, 'file_45d') else None
+        
+        print(f"Using files for alternative current calculation:")
+        print(f"  0° file: {file_0d}")
+        print(f"  90° file: {file_90d}")
+        print(f"  45° file: {file_45d if file_45d else 'Not available'}")
+
+        # Load data
+        with open(file_0d, 'r') as f:
+            data_0d = json.load(f)
+        with open(file_90d, 'r') as f:
+            data_90d = json.load(f)
+        if file_45d and os.path.exists(file_45d):
+            with open(file_45d, 'r') as f:
+                data_45d = json.load(f)
+        else:
+            data_45d = None
+    except Exception as e:
+        print(f"Error loading angle files: {e}")
+        return
+
+    # Extract results
+    results_0d = data_0d["results"]
+    results_90d = data_90d["results"]
+    results_45d = data_45d["results"] if data_45d else None
+
+    # Compute angles and intensities for all points using alternative method
+    results = []
+    for i, point_0d in enumerate(results_0d):
+        x = point_0d["x"]
+        y = point_0d["y"]
+        field_0_dBm = point_0d["field_strength"]
+        field_90_dBm = results_90d[i]["field_strength"]
+        field_45_dBm = results_45d[i]["field_strength"] if results_45d else 0
+
+        # Convert field strength from dBm to linear scale
+        field_0 = 10 ** (field_0_dBm / 10)
+        field_90 = 10 ** (field_90_dBm / 10)
+        field_45 = 10 ** (field_45_dBm / 10)
+
+        # Compute the orientation of the field using ALTERNATIVE formula
+        # θ = arctan2(B₉₀, B₀) + π · step(-B₄₅ · ((B₀ + B₉₀)/√2))
+        
+        # 1. Calculate basic vector angle
+        theta_prelim = np.arctan2(field_90, field_0)
+        
+        # 2. Calculate expected 45° component and compare with actual
+        field_45_expected = (field_0 + field_90) / np.sqrt(2)
+        
+        # 3. Apply phase correction (add π if the sign of measured and expected 45° components differ)
+        comparison = field_45 * field_45_expected
+        phase_correction = np.pi if comparison < 0 else 0
+        
+        # 4. Final angle calculation
+        angle = theta_prelim + phase_correction
+
+        # Compute the field intensity using only 0° and 90°
+        intensity = np.sqrt(field_0**2 + field_90**2)
+
+        # Append results
+        results.append({
+            "x": x,
+            "y": y,
+            "field_strength": intensity,
+            "angle": angle
+        })
+
+    # Save intensity and angle data to alt_debug_intensity.json
+    alt_debug_intensity_file = "alt_debug_intensity.json"
+    debug_data = {
+        "metadata": data_0d.get("metadata", {}),
+        "results": results
+    }
+    with open(alt_debug_intensity_file, 'w') as f:
+        json.dump(debug_data, f, indent=4)
+    print(f"Alternative debug intensity and angle data saved to {alt_debug_intensity_file}")
+
+    # Prepare data for visualization
+    x = [point["x"] for point in results]
+    y = [point["y"] for point in results]
+    intensity = [point["field_strength"] for point in results]
+    angle = [point["angle"] for point in results]
+
+    # Create a grid for visualization
+    unique_x = sorted(set(x))
+    unique_y = sorted(set(y))
+    X, Y = np.meshgrid(unique_x, unique_y)
+    Z_intensity = np.full((len(unique_y), len(unique_x)), np.nan)
+    U = np.full((len(unique_y), len(unique_x)), np.nan)
+    V = np.full((len(unique_y), len(unique_x)), np.nan)
+
+    for point in results:
+        xi = unique_x.index(point["x"])
+        yi = unique_y.index(point["y"])
+        Z_intensity[yi, xi] = point["field_strength"]
+        U[yi, xi] = np.cos(point["angle"])
+        V[yi, xi] = np.sin(point["angle"])
+
+    # Normalize the intensity for visualization
+    intensity_normalized = Z_intensity / np.nanmax(Z_intensity)
+
+    # Plot streamlines with intensity-based linewidth
+    try:
+        X_cm = X * 100
+        Y_cm = Y * 100
+        stream = plot_ax.streamplot(
+            X_cm, Y_cm, U, V,
+            color=intensity_normalized,  # Use field intensity to color the streamlines
+            linewidth=2 * intensity_normalized,  # Thicker lines indicate stronger currents
+            cmap='plasma',  # Different colormap to distinguish from regular method
+            density=2.0  # Higher density provides more detailed current flow patterns
+        )
+        plot_ax.set_xlim(min(x) * 100, max(x) * 100)
+        plot_ax.set_ylim(min(y) * 100, max(y) * 100)
+        fig.canvas.draw_idle()
+        print("Alternative streamlines displayed.")
+    except ValueError as e:
+        print(f"Error processing alternative current directions: {e}")
 
 def show_debug_intensity(event):
     """Display the debug intensity data as a heatmap."""
@@ -457,13 +593,21 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
     # Add Done button at the bottom
     button_done_ax = plt.axes([buttons_left_pos, button_start_y - 5 * (button_height + button_spacing), button_width, button_height])
     
+    # Add to plot_with_selector function, after the button_current_ax creation:
+    
+    # Add alternative current direction button below the regular one
+    button_alt_current_ax = plt.axes([buttons_left_pos, button_start_y - 5 * (button_height + button_spacing), button_width, button_height])
+    
+    # Move Done button down one position
+    button_done_ax = plt.axes([buttons_left_pos, button_start_y - 6 * (button_height + button_spacing), button_width, button_height])
+    
     # Add transparency slider on the left - moved down to avoid overlap
     slider_ax = plt.axes([buttons_left_pos, 0.15, button_width, 0.03])  # Moved down from 0.2 to 0.15
     
     # Add debug intensity button at the bottom left
-    button_debug_ax = plt.axes([0.05, 0.05, 0.12, 0.05])
-    button_debug = Button(button_debug_ax, 'Debug Intensity', color='orange')
-    button_debug.on_clicked(show_debug_intensity)
+    #button_debug_ax = plt.axes([0.05, 0.05, 0.12, 0.05])
+    #button_debug = Button(button_debug_ax, 'Debug Intensity', color='orange')
+    #button_debug.on_clicked(show_debug_intensity)
     
     # Create a dictionary to store plot objects
     plot_objects = {
@@ -691,6 +835,12 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
     
     button_current = Button(button_current_ax, 'Show Currents', color='lightcoral')
     button_current.on_clicked(show_currents)
+
+    # Add the Alt Currents button
+    button_alt_current = Button(button_alt_current_ax, 'Alt Currents', color='orange')
+    button_alt_current.on_clicked(show_alt_currents)
+
+
     
     # Add the Done button
     button_done = Button(button_done_ax, 'Done', color='lightgreen')
@@ -698,6 +848,54 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
     
     # Add a label for the transparency slider - moved down to match slider
     fig.text(buttons_left_pos + button_width/2, 0.20, 'Adjust Transparency:', ha='center')
+    
+    # Create an axes for probe angle indicators at the bottom of the plot
+    probe_angle_ax = plt.axes([0.25, 0.10, 0.55, 0.08], frameon=False)
+    probe_angle_ax.set_xlim(0, 100)
+    probe_angle_ax.set_ylim(0, 100)
+    probe_angle_ax.set_xticks([])
+    probe_angle_ax.set_yticks([])
+    probe_angle_ax.set_title("Probe Orientations", fontsize=10)
+    
+    # Draw probe angle indicators
+    def draw_probe_indicators(ax):
+        # Clear previous indicators
+        ax.clear()
+        ax.set_xlim(0, 100)
+        ax.set_ylim(0, 100)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_title("Probe Orientations", fontsize=10)
+        
+        # Center points for each probe indicator
+        centers = [(25, 50), (50, 50), (75, 50)]
+        
+        # Draw 0° probe (horizontal line)
+        ax.plot([centers[0][0]-10, centers[0][0]+10], [centers[0][1], centers[0][1]], 'b-', linewidth=2)
+        ax.text(centers[0][0], centers[0][1]-15, "0°", ha='center', fontsize=10)
+        
+        # Draw 45° probe (diagonal line)
+        ax.plot([centers[1][0]-7, centers[1][0]+7], [centers[1][1]-7, centers[1][1]+7], 'g-', linewidth=2)
+        ax.text(centers[1][0], centers[1][1]-15, "45°", ha='center', fontsize=10)
+        
+        # Draw 90° probe (vertical line)
+        ax.plot([centers[2][0], centers[2][0]], [centers[2][1]-10, centers[2][1]+10], 'r-', linewidth=2)
+        ax.text(centers[2][0], centers[2][1]-15, "90°", ha='center', fontsize=10)
+    
+    # Draw initial probe indicators
+    draw_probe_indicators(probe_angle_ax)
+    
+    # Store angle_ax in fig for access in update_plot
+    fig.probe_angle_ax = probe_angle_ax
+    
+    # Update the update_plot function to redraw probe indicators
+    original_update_plot = update_plot
+    def updated_update_plot():
+        original_update_plot()
+        draw_probe_indicators(fig.probe_angle_ax)
+    
+    # Replace the update_plot function with our updated version
+    update_plot = updated_update_plot
     
     # Connect slider to update function
     alpha_slider.on_changed(on_alpha_change)
