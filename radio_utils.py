@@ -13,6 +13,15 @@ from uhd.types import RXMetadata  # Correct import for RXMetadata
 from uhd.usrp import StreamArgs  # Correct import for StreamArgs
 import time
 from config import DEBUG_ALL  # Import DEBUG_ALL
+import threading  # Add this import for thread synchronization
+
+# Global lock for synchronized printing
+_print_lock = threading.Lock()
+
+def synchronized_print(*args, **kwargs):
+    """Thread-safe print function to prevent output corruption"""
+    with _print_lock:
+        print(*args, **kwargs)
 
 def measure_field_strength(streamer, rx_gain, debug=True):
     """
@@ -47,7 +56,7 @@ def measure_field_strength(streamer, rx_gain, debug=True):
 
             if metadata.error_code != uhd.types.RXMetadataErrorCode.none:
                 if debug:
-                    print(f"WARNING: RX Metadata error on attempt {attempt}/{max_attempts}: {metadata.error_code}")
+                    synchronized_print(f"WARNING: RX Metadata error on attempt {attempt}/{max_attempts}: {metadata.error_code}")
                 
                 # Try to recover by resetting the stream
                 stop_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont)
@@ -57,7 +66,7 @@ def measure_field_strength(streamer, rx_gain, debug=True):
             
             if num_rx_samps == 0:
                 if debug:
-                    print(f"WARNING: No samples received on attempt {attempt}/{max_attempts}")
+                    synchronized_print(f"WARNING: No samples received on attempt {attempt}/{max_attempts}")
                 continue
                 
             # Check for valid signal (non-zero amplitude)
@@ -66,7 +75,7 @@ def measure_field_strength(streamer, rx_gain, debug=True):
             
             if sample_amplitude < 1e-9:  # Extremely low signal - likely no transmission
                 if debug:
-                    print(f"WARNING: Signal amplitude too low on attempt {attempt}/{max_attempts}: {sample_amplitude:.2e}")
+                    synchronized_print(f"WARNING: Signal amplitude too low on attempt {attempt}/{max_attempts}: {sample_amplitude:.2e}")
                 continue
             
             # If we got here, we have a valid measurement
@@ -75,18 +84,18 @@ def measure_field_strength(streamer, rx_gain, debug=True):
             input_power_dbm = power_dbm - rx_gain  # Subtract receiver gain
             
             if debug:
-                print(f"DEBUG: Success on attempt {attempt}/{max_attempts}, received {num_rx_samps} samples, amplitude: {sample_amplitude:.2e}, power: {input_power_dbm:.2f} dBm")
+                synchronized_print(f"DEBUG: Success on attempt {attempt}/{max_attempts}, received {num_rx_samps} samples, amplitude: {sample_amplitude:.2e}, power: {input_power_dbm:.2f} dBm")
                 
             return input_power_dbm
             
         # If we get here, all attempts failed
         if debug:
-            print(f"ERROR: All {max_attempts} measurement attempts failed")
+            synchronized_print(f"ERROR: All {max_attempts} measurement attempts failed")
         return None
             
     except RuntimeError as e:
         if debug:
-            print(f"Error measuring field strength: {e}")
+            synchronized_print(f"Error measuring field strength: {e}")
         return None
 
 def initialize_radio(center_frequency, rx_gain, equivalent_bw):
@@ -105,29 +114,29 @@ def initialize_radio(center_frequency, rx_gain, equivalent_bw):
         Tuple of (usrp, streamer) objects, or (None, None) on failure
     """
     try:
-        print("DEBUG: Starting USRP initialization...")
+        synchronized_print("DEBUG: Starting USRP initialization...")
         usrp = uhd.usrp.MultiUSRP()
-        print("DEBUG: USRP object created successfully")
+        synchronized_print("DEBUG: USRP object created successfully")
         
-        print(f"DEBUG: Setting RX frequency to {center_frequency/1e6} MHz")
+        synchronized_print(f"DEBUG: Setting RX frequency to {center_frequency/1e6} MHz")
         usrp.set_rx_freq(center_frequency)
-        print(f"DEBUG: Actual RX frequency: {usrp.get_rx_freq()/1e6} MHz")
+        synchronized_print(f"DEBUG: Actual RX frequency: {usrp.get_rx_freq()/1e6} MHz")
         
-        print(f"DEBUG: Setting RX gain to {rx_gain} dB")
+        synchronized_print(f"DEBUG: Setting RX gain to {rx_gain} dB")
         usrp.set_rx_gain(rx_gain)
-        print(f"DEBUG: Actual RX gain: {usrp.get_rx_gain()} dB")
+        synchronized_print(f"DEBUG: Actual RX gain: {usrp.get_rx_gain()} dB")
         
-        print(f"DEBUG: Setting RX bandwidth to {equivalent_bw/1e6} MHz")
+        synchronized_print(f"DEBUG: Setting RX bandwidth to {equivalent_bw/1e6} MHz")
         usrp.set_rx_bandwidth(equivalent_bw)
-        print(f"DEBUG: Actual RX bandwidth: {usrp.get_rx_bandwidth()/1e6} MHz")
+        synchronized_print(f"DEBUG: Actual RX bandwidth: {usrp.get_rx_bandwidth()/1e6} MHz")
         
-        print(f"DEBUG: Setting RX sample rate to 1 MHz")
+        synchronized_print(f"DEBUG: Setting RX sample rate to 1 MHz")
         usrp.set_rx_rate(1e6)  # Default sample rate
-        print(f"DEBUG: Actual RX sample rate: {usrp.get_rx_rate()/1e6} MHz")
+        synchronized_print(f"DEBUG: Actual RX sample rate: {usrp.get_rx_rate()/1e6} MHz")
         
-        print("DEBUG: Creating stream arguments")
+        synchronized_print("DEBUG: Creating stream arguments")
         stream_args = StreamArgs("fc32", "sc16")
-        print("DEBUG: Stream arguments created, now getting RX stream")
+        synchronized_print("DEBUG: Stream arguments created, now getting RX stream")
         
         # This is often where programs can hang - add a timeout mechanism
         import signal
@@ -140,70 +149,95 @@ def initialize_radio(center_frequency, rx_gain, equivalent_bw):
         signal.alarm(10)
         
         try:
-            print("DEBUG: Calling get_rx_stream() - this may take a moment...")
+            synchronized_print("DEBUG: Calling get_rx_stream() - this may take a moment...")
             streamer = usrp.get_rx_stream(stream_args)
             signal.alarm(0)  # Disable alarm
-            print("DEBUG: RX stream obtained successfully")
+            synchronized_print("DEBUG: RX stream obtained successfully")
         except TimeoutError as e:
-            print(f"ERROR: {e}")
+            synchronized_print(f"ERROR: {e}")
             signal.alarm(0)  # Disable alarm
             return None, None
         finally:
             signal.signal(signal.SIGALRM, old_handler)  # Restore original handler
         
-        print("DEBUG: USRP initialization complete")
+        synchronized_print("DEBUG: USRP initialization complete")
         return usrp, streamer
     except RuntimeError as e:
-        print(f"ERROR initializing USRP: {e}")
+        synchronized_print(f"ERROR initializing USRP: {e}")
         return None, None
     except Exception as e:
-        print(f"UNEXPECTED ERROR initializing USRP: {e}")
+        synchronized_print(f"UNEXPECTED ERROR initializing USRP: {e}")
         import traceback
         traceback.print_exc()
         return None, None
 
-def get_power_dBm(streamer, rx_gain, num_samples=1024, num_averages=10):
+def get_power_dBm(streamer, rx_gain, num_samples=1024, num_averages=10, debug=True, fast_mode=False):
     """
     Measure the average power in dBm from the received samples.
-    
-    This is an enhanced version of measure_field_strength that performs
-    multiple measurements and averages them for more stable results.
-    It's particularly important for accurate field mapping in environments
-    with temporal variations.
     
     Args:
         streamer: The USRP RX streamer object
         rx_gain: The receiver gain in dB
         num_samples: Number of samples to receive per measurement
         num_averages: Number of measurements to average
+        debug: Whether to print debug messages
+        fast_mode: If True, use minimal averaging for faster response
         
     Returns:
         float: The average power in dBm, or None on error
     """
     try:
-        # Issue a fresh stream command to ensure streaming is active
+        # For interactive/fast mode, use fewer averages
+        if fast_mode:
+            num_averages = 2  # Reduce averaging drastically
+            
+        # CRITICAL FIX: Complete stream reset to clear all buffered samples
+        # First stop any ongoing streaming
+        stop_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont)
+        streamer.issue_stream_cmd(stop_cmd)
+        time.sleep(0.01)  # Small delay to ensure command is processed
+        
+        # Then issue a new stream command to start fresh
         stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.start_cont)
         stream_cmd.stream_now = True
         streamer.issue_stream_cmd(stream_cmd)
-        time.sleep(0.1)  # Give the stream command time to take effect
         
+        # Discard initial samples which might be stale
+        discard_count = 10  # Increased from implicit 0
         buffer = np.zeros(num_samples, dtype=np.complex64)
         metadata = uhd.types.RXMetadata()
+        
+        # Actively discard samples to clear buffers
+        for _ in range(discard_count):
+            try:
+                streamer.recv(buffer, metadata, 0.01)  # Short timeout
+            except:
+                pass  # Ignore errors during discard
+        
+        # Fast mode needs less settling time after discard
+        if not fast_mode:
+            time.sleep(0.05)
+        else:
+            time.sleep(0.01)
+        
+        # Reset buffer for actual measurements
         power_linear = []
         
         # Increase max attempts to handle timeout errors
         attempts = 0
-        max_attempts = num_averages * 3  # Allow more attempts than requested averages
+        max_attempts = num_averages * (2 if fast_mode else 3)  # Fewer attempts for fast mode
         
         while len(power_linear) < num_averages and attempts < max_attempts:
             attempts += 1
             try:
-                num_rx_samps = streamer.recv(buffer, metadata, 0.1)  # Add timeout of 0.1s
+                # Shorter timeout for fast mode
+                timeout = 0.05 if fast_mode else 0.1
+                num_rx_samps = streamer.recv(buffer, metadata, timeout)
                 
                 # Handle metadata errors
                 if metadata.error_code != uhd.types.RXMetadataErrorCode.none:
-                    print(f"WARNING: RX Metadata error: {metadata.error_code}")
-                    # Don't break - continue to try more measurements
+                    if debug and not fast_mode:  # Skip debug in fast mode
+                        synchronized_print(f"WARNING: RX Metadata error: {metadata.error_code}")
                     continue
                 
                 if num_rx_samps > 0:
@@ -212,17 +246,16 @@ def get_power_dBm(streamer, rx_gain, num_samples=1024, num_averages=10):
                     sample_power = np.mean(np.abs(valid_samples)**2)
                     if not np.isnan(sample_power) and sample_power > 0:
                         power_linear.append(sample_power)
-                        print(f"DEBUG: Good measurement {len(power_linear)}/{num_averages}")
+                        if debug and not fast_mode:  # Skip debug in fast mode
+                            synchronized_print(f"DEBUG: Good measurement {len(power_linear)}/{num_averages}")
             except RuntimeError as e:
-                if "timeout" in str(e).lower():
-                    # Just log timeout errors and continue
-                    print(f"NOTE: Timeout during receive, retrying ({attempts}/{max_attempts})")
-                else:
-                    # Log other errors but still continue trying
-                    print(f"ERROR during receive: {e}")
+                if "timeout" in str(e).lower() and debug and not fast_mode:
+                    synchronized_print(f"NOTE: Timeout during receive, retrying ({attempts}/{max_attempts})")
+                elif debug and not fast_mode:
+                    synchronized_print(f"ERROR during receive: {e}")
                     
-            # Small delay between measurements
-            time.sleep(0.01)
+            # Minimal delay between measurements in fast mode
+            time.sleep(0.005 if fast_mode else 0.01)
                     
         # Stop continuous streaming
         stop_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont)
@@ -230,22 +263,20 @@ def get_power_dBm(streamer, rx_gain, num_samples=1024, num_averages=10):
         
         # Check if we have any valid measurements
         if not power_linear:  # Empty list
-            print("WARNING: No valid power measurements obtained")
+            if debug and not fast_mode:
+                synchronized_print("WARNING: No valid power measurements obtained")
             return None
             
-        print(f"DEBUG: Obtained {len(power_linear)} valid power measurements")
+        if debug and not fast_mode:
+            synchronized_print(f"DEBUG: Obtained {len(power_linear)} valid power measurements")
+            
         avg_power_linear = np.mean(power_linear)
-        power_dbm = 10 * np.log10(avg_power_linear + 1e-12) + 30  # Convert to dBm with safety offset
-        input_power_dbm = power_dbm - rx_gain  # Subtract receiver gain
+        power_dbm = 10 * np.log10(avg_power_linear + 1e-12) + 30
+        input_power_dbm = power_dbm - rx_gain
         return input_power_dbm
-    except RuntimeError as e:
-        print(f"Error measuring power: {e}")
-        return None
-    except ValueError as e:
-        print(f"Value error in power calculation: {e}")
-        return None
     except Exception as e:
-        print(f"Unexpected error in power measurement: {e}")
-        import traceback
-        traceback.print_exc()
+        if debug and not fast_mode:
+            synchronized_print(f"Error measuring power: {e}")
+            import traceback
+            traceback.print_exc()
         return None

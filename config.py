@@ -45,11 +45,11 @@ DEBUG_INTERRACTIVE = True  # If True, print debug commands and update graphical 
 
 # USRP buffer and movement settings
 MOVEMENT_SETTLE_DELAY = 0.05  # Delay after movement (in seconds) to allow mechanics to stabilize
-BUFFER_FLUSH_COUNT = 3  # Number of samples to discard before taking measurement to clear stale data
+BUFFER_FLUSH_COUNT = 8  # Increased from 3 to 8 to better handle buffering issues
 
 # Output configuration
 PCB_IMAGE_PATH = "./pcb_large_1.jpg"  # Path to the PCB image
-OUTPUT_FILE = "scan_v1a_400MHz_Rx_pcb_large2.json"  # Default output file name
+OUTPUT_FILE = "scan_v1b_400MHz_Rx_pcb_large.json"  # Default output file name
 
 # Visualization configuration
 VERTICAL_FLIP = True # Whether to flip the PCB image vertically for proper alignment

@@ -11,7 +11,7 @@ import time
 import numpy as np
 import uhd  # Add uhd import here
 from radio_utils import get_power_dBm
-from config import RX_GAIN, DEFAULT_Z, PCB_SIZE_CM, MAX_HEIGHT_COMPONENT_X_MM, MAX_HEIGHT_COMPONENT_Y_MM  # Import additional constants
+from config import RX_GAIN, DEFAULT_Z, PCB_SIZE_CM, MAX_HEIGHT_COMPONENT_X_MM, MAX_HEIGHT_COMPONENT_Y_MM, BUFFER_FLUSH_COUNT  # Add BUFFER_FLUSH_COUNT import
 
 def send_gcode_command(command, printer_socket):
     """
@@ -76,8 +76,13 @@ def adjust_head(printer, usrp, streamer):
         x, y = pcb_corners[corner]
         # Lift the probe to a safe height before moving in X-Y
         printer.move_probe(x=0, y=0, z=z_height + z_lift, feedrate=3000)  # Lift Z first
+        printer.send_gcode("M400")  # Add M400 to ensure movement completes
+        
         printer.move_probe(x=x + x_offset, y=y + y_offset, z=z_height + z_lift, feedrate=3000)  # Travel to the corner
+        printer.send_gcode("M400")  # Add M400 to ensure movement completes
+        
         printer.move_probe(x=x + x_offset, y=y + y_offset, z=z_height - z_lift, feedrate=3000)  # Lower Z to probing height
+        printer.send_gcode("M400")  # Add M400 to ensure movement completes
 
     def move_to_max_height():
         """Move the probe to the highest component position."""
@@ -85,11 +90,19 @@ def adjust_head(printer, usrp, streamer):
         y = MAX_HEIGHT_COMPONENT_Y_MM  # Use constant from config.py
         # Lift the probe to a safe height before moving in X-Y
         printer.move_probe(x=0, y=0, z=z_height + z_lift, feedrate=3000)  # Lift Z first
+        printer.send_gcode("M400")  # Add M400 to ensure movement completes
+        
         printer.move_probe(x=x + x_offset, y=y + y_offset, z=z_height + z_lift, feedrate=3000)  # Travel to the max height position
+        printer.send_gcode("M400")  # Add M400 to ensure movement completes
+        
         printer.move_probe(x=x + x_offset, y=y + y_offset, z=z_height, feedrate=3000)  # Land at max Z
+        printer.send_gcode("M400")  # Add M400 to ensure movement completes
 
     def measure_power():
         """Measure the radio power and update the label in a thread-safe way."""
+        # Add thread lock for print synchronization
+        print_lock = threading.Lock()
+        
         while not done:
             try:
                 # Store measurements locally first
@@ -102,18 +115,36 @@ def adjust_head(printer, usrp, streamer):
                 if False:  # Simulate USRP
                     local_power = np.random.uniform(-70, -50)  # Simulated power in dBm
                 else:
-                    # First make sure we're issuing a stream command
-                    stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.num_done)
-                    stream_cmd.num_samps = 1024
-                    stream_cmd.stream_now = True
-                    streamer.issue_stream_cmd(stream_cmd)
+                    # Complete stream reset with lock to prevent interleaved prints
+                    with print_lock:
+                        # CRITICAL FIX: Complete stream reset before each measurement
+                        stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont)
+                        streamer.issue_stream_cmd(stream_cmd)
+                        time.sleep(0.01)  # Small delay to ensure stop is processed
+                        
+                        # Now start a new stream command
+                        stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.num_done)
+                        stream_cmd.num_samps = 1024
+                        stream_cmd.stream_now = True
+                        streamer.issue_stream_cmd(stream_cmd)
                     
-                    # Then measure power
-                    local_power = get_power_dBm(streamer, RX_GAIN)
+                    # Increase buffer flush count to ensure stale data is cleared
+                    flush_count = BUFFER_FLUSH_COUNT * 2
                     
-                    # Debug output for successful measurement
+                    # Flush USRP buffer by taking and discarding measurements
+                    for _ in range(flush_count):
+                        try:
+                            _ = get_power_dBm(streamer, RX_GAIN, debug=False, fast_mode=True)
+                        except Exception:
+                            pass
+                    
+                    # Measure with thread-safe debug output
+                    local_power = get_power_dBm(streamer, RX_GAIN, debug=False, fast_mode=True)
+                    
+                    # Use lock for debug prints to prevent interleaving
                     if local_power is not None and not np.isnan(local_power):
-                        print(f"DEBUG: Measured power: {local_power:.2f} dBm")
+                        with print_lock:
+                            print(f"DEBUG: Measured power: {local_power:.2f} dBm")
                 
                 # IMPORTANT: Check if 'done' before updating UI to prevent crashes
                 # This is critical for thread safety
@@ -124,14 +155,15 @@ def adjust_head(printer, usrp, streamer):
                     if power_val is not None and not np.isnan(power_val):
                         root.after(0, lambda p=power_val: power_label.config(text=f"Power: {p:.2f} dBm"))
                     else:
-                        root.after(0, lambda: power_label.config(text="Power: Measurement Failed"))
+                        root.after(0, lambda: power_label.config(text="Power: Measuring..."))
             except Exception as e:
-                print(f"ERROR in measurement thread: {e}")
+                with print_lock:  # Thread-safe error printing
+                    print(f"ERROR in measurement thread: {e}")
                 # If we get an exception, add a small delay to prevent tight loops
-                time.sleep(0.1)
+                time.sleep(0.05)
             
-            # Sleep to avoid tight loop
-            time.sleep(1)
+            # Sleep to avoid tight loop - reduce even further
+            time.sleep(0.1)  # Reduced from 0.2 to 0.1 seconds for more responsive updates
     
     def done_callback():
         """Return to the correct Z height and exit."""
@@ -172,6 +204,7 @@ def adjust_head(printer, usrp, streamer):
         nonlocal z_height
         z_height += delta
         printer.send_gcode(f"G1 Z{z_height:.3f} F3000")  # Only adjust Z
+        printer.send_gcode("M400")  # Add M400 to ensure movement completes
         z_label.config(text=f"Defined Z: {z_height:.2f} mm")  # Update the Z reference display
 
     def adjust_x(delta):
@@ -179,6 +212,7 @@ def adjust_head(printer, usrp, streamer):
         nonlocal x_offset
         x_offset += delta
         printer.send_gcode(f"G1 X{x_offset:.3f} F3000")  # Move X axis
+        printer.send_gcode("M400")  # Add M400 to ensure movement completes
         x_label.config(text=f"X Offset: {x_offset:.2f} mm")  # Update the X offset display
 
     def adjust_y(delta):
@@ -186,6 +220,7 @@ def adjust_head(printer, usrp, streamer):
         nonlocal y_offset
         y_offset += delta
         printer.send_gcode(f"G1 Y{y_offset:.3f} F3000")  # Move Y axis
+        printer.send_gcode("M400")  # Add M400 to ensure movement completes
         y_label.config(text=f"Y Offset: {y_offset:.2f} mm")  # Update the Y offset display
 
     # Create the Tkinter window
