@@ -74,8 +74,8 @@ def initialize_plot():
     """
     plt.ion()  # Turn on interactive mode
     fig, ax = plt.subplots(figsize=(8, 6))
-    ax.set_xlabel("X (cm)")
-    ax.set_ylabel("Y (cm)")
+    ax.set_xlabel("X (mm)")
+    ax.set_ylabel("Y (mm)")
     ax.set_title("EM Field Strength (Interactive)")
     fig.canvas.manager.set_window_title("Measuring board - real-time scan view")  # Set a more meaningful window title
     ax.set_aspect('equal', adjustable='box')
@@ -150,8 +150,8 @@ def update_plot(ax, contour, colorbar, results, x_values, y_values):
                 y_max = max(field_sorted) + 5
                 ax.set_ylim(y_min, y_max)
     
-    ax.set_xlabel("X (cm)")
-    ax.set_ylabel("Y (cm)" if is_2d_data else "Field Strength (dBm)")
+    ax.set_xlabel("X (mm)")
+    ax.set_ylabel("Y (mm)" if is_2d_data else "Field Strength (dBm)")
     ax.set_title("EM Field Strength (Interactive)")
     ax.set_aspect('auto')  # Changed from 'equal' to 'auto' for better display of 1D data
     plt.pause(0.1)
@@ -535,8 +535,8 @@ def show_debug_intensity(event):
     plot_ax.clear()
     plot_ax.contourf(X, Y, Z, cmap="viridis", levels=50)
     plot_ax.set_title("Debug Intensity Heatmap")
-    plot_ax.set_xlabel("X (cm)")
-    plot_ax.set_ylabel("Y (cm)")
+    plot_ax.set_xlabel("X (mm)")
+    plot_ax.set_ylabel("Y (mm)")
     fig.canvas.draw_idle()
     print("Debug intensity heatmap displayed.")
 
@@ -618,7 +618,7 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
     button_current_ax = plt.axes([buttons_left_pos, button_start_y - 4 * (button_height + button_spacing), button_width, button_height])
     
     # Add Done button at the bottom
-    button_done_ax = plt.axes([buttons_left_pos, button_start_y - 5 * (button_height + button_spacing), button_width, button_height])
+    #button_done_ax = plt.axes([buttons_left_pos, button_start_y - 5 * (button_height + button_spacing), button_width, button_height])
     
     # Add to plot_with_selector function, after the button_current_ax creation:
     
@@ -657,7 +657,7 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
     fig.file_45d = file_45d
     
     # Create transparency slider - MOVED THIS HERE TO FIX THE ERROR
-    alpha_slider = Slider(slider_ax, 'PCB Transparency', 0.0, 1.0, valinit=0.5)
+    alpha_slider = Slider(slider_ax, 'PCB', 0.0, 1.0, valinit=0.5)
     
     # Create a variable to store our colorbar reference
     colorbar_obj = None
@@ -763,8 +763,8 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
                     print(f"Notice: Could not update colorbar: {e}")
             
             # Set labels and title
-            plot_ax.set_xlabel("X (cm)")
-            plot_ax.set_ylabel("Y (cm)")
+            plot_ax.set_xlabel("X (mm)")
+            plot_ax.set_ylabel("Y (mm)")
             plot_ax.set_title(current_title)
             
             # Set fixed position for plot axis
@@ -876,13 +876,13 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
     # Add a label for the transparency slider - moved down to match slider
     fig.text(buttons_left_pos + button_width/2, 0.20, 'Adjust Transparency:', ha='center')
     
-    # Create an axes for probe angle indicators at the bottom of the plot
-    probe_angle_ax = plt.axes([0.25, 0.10, 0.55, 0.08], frameon=False)
+    # Create an axes for probe angle indicators at the bottom of the plot - lower position
+    probe_angle_ax = plt.axes([0.25, 0.07, 0.55, 0.08], frameon=False)  # Moved from 0.10 to 0.07
     probe_angle_ax.set_xlim(0, 100)
     probe_angle_ax.set_ylim(0, 100)
     probe_angle_ax.set_xticks([])
     probe_angle_ax.set_yticks([])
-    probe_angle_ax.set_title("Probe Orientations", fontsize=10)
+    probe_angle_ax.set_title("Probe Orientations", fontsize=10, pad=10)  # Added padding
     
     # Draw probe angle indicators
     def draw_probe_indicators(ax):
@@ -898,16 +898,16 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
         centers = [(25, 50), (50, 50), (75, 50)]
         
         # Draw 0° probe (horizontal line)
-        ax.plot([centers[0][0]-10, centers[0][0]+10], [centers[0][1], centers[0][1]], 'b-', linewidth=2)
-        ax.text(centers[0][0], centers[0][1]-15, "0°", ha='center', fontsize=10)
+        ax.plot([centers[0][0]-5, centers[0][0]+5], [centers[0][1], centers[0][1]], 'b-', linewidth=2)
+        ax.text(centers[0][0], centers[0][1]-45, "0°", ha='center', fontsize=10)  # Changed from -15 to -45
         
         # Draw 45° probe (diagonal line)
-        ax.plot([centers[1][0]-7, centers[1][0]+7], [centers[1][1]-7, centers[1][1]+7], 'g-', linewidth=2)
-        ax.text(centers[1][0], centers[1][1]-15, "45°", ha='center', fontsize=10)
+        ax.plot([centers[1][0]-2, centers[1][0]+2], [centers[1][1]-14, centers[1][1]+14], 'g-', linewidth=2)
+        ax.text(centers[1][0], centers[1][1]-45, "45°", ha='center', fontsize=10)  # Changed from -15 to -45
         
         # Draw 90° probe (vertical line)
-        ax.plot([centers[2][0], centers[2][0]], [centers[2][1]-10, centers[2][1]+10], 'r-', linewidth=2)
-        ax.text(centers[2][0], centers[2][1]-15, "90°", ha='center', fontsize=10)
+        ax.plot([centers[2][0], centers[2][0]], [centers[2][1]-20, centers[2][1]+20], 'r-', linewidth=2)
+        ax.text(centers[2][0], centers[2][1]-45, "90°", ha='center', fontsize=10)  # Changed from -15 to -45
     
     # Draw initial probe indicators
     draw_probe_indicators(probe_angle_ax)
