@@ -30,8 +30,8 @@ RX_GAIN = 76              # Receiver gain in dB
 nb_avera = 100            # Number of measurements to average
 
 # 3D printer configuration
-PRINTER_IP = "192.168.2.100"  # Updated to match actual printer IP based on ping results
-PRINTER_PORT = 23  # Default Telnet port for G-code communication
+PRINTER_IP = "192.168.2.100"  # Printer IP address
+PRINTER_PORT = 80  # Changed from 23 (Telnet) to 80 (HTTP)
 DEFAULT_Z = 98.2  # Default Z height in mm for printer positioning
 with open("password.txt", "r") as file:
     PRINTER_PASSWORD = file.read().strip()  # Password is now loaded from password.txt file instead of being hardcoded

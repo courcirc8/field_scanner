@@ -205,7 +205,7 @@ def scan_field(file_name):
     connection_status = printer.connect()
 
     # Terminate if the printer connection fails
-    if not connection_status or not printer.socket:
+    if not connection_status or not printer.connected:  # Updated to check `printer.connected`
         print("Failed to connect to the 3D printer. Check IP address, port, and password. Exiting scan.")
         return
 

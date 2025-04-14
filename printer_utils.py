@@ -13,23 +13,18 @@ import uhd  # Add uhd import here
 from radio_utils import get_power_dBm
 from config import RX_GAIN, DEFAULT_Z, PCB_SIZE_CM, MAX_HEIGHT_COMPONENT_X_MM, MAX_HEIGHT_COMPONENT_Y_MM, BUFFER_FLUSH_COUNT  # Add BUFFER_FLUSH_COUNT import
 
-def send_gcode_command(command, printer_socket):
+def send_gcode_command(command, printer_connection):
     """
     Send a G-code command to the 3D printer and retrieve the response.
     
-    This is a low-level function that handles the communication protocol
-    with the 3D printer's control interface.
-    
     Args:
         command: G-code command string
-        printer_socket: Connected socket to the printer
+        printer_connection: PrinterConnection object
         
     Returns:
         Response string from the printer
     """
-    printer_socket.sendall((command + "\n").encode())
-    response = printer_socket.recv(1024).decode()
-    return response
+    return printer_connection.send_gcode(command)
 
 def adjust_head(printer, usrp, streamer):
     """
