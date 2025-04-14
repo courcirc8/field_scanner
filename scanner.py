@@ -3,7 +3,7 @@ import tkinter as tk
 from plot_utils import plot_field, plot_with_selector
 from scan_utils import scan_field
 from file_utils import display_scan, get_user_choice
-from config import PCB_IMAGE_PATH, OUTPUT_FILE  # Import constants from config
+from config import PCB_IMAGE_PATH, OUTPUT_FILE  # Import csudo ufw allow 23/tcpsudo ufw allow 23/tcponstants from config
 
 # Main entry point for the Field Scanner application
 # This module orchestrates the workflow for either displaying existing scans

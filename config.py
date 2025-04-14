@@ -11,7 +11,7 @@
 # PCB-related constants
 #PCB_SIZE_CM = (2.165, 1.53)  # PCB size in centimeters (width, height)
 PCB_SIZE_CM = (2.55, 2.0)  # PCB size in centimeters (width, height)
-#PCB_SIZE_CM = (0.5, 0.53)  # PCB size in centimeters (width, height)
+#PCB_SIZE_CM = (1.55, 1.06)  # PCB size in centimeters (width, height)
 
 
 # Component position for max height measurement
@@ -49,7 +49,7 @@ BUFFER_FLUSH_COUNT = 8  # Increased from 3 to 8 to better handle buffering issue
 
 # Output configuration
 PCB_IMAGE_PATH = "./pcb_large_1.jpg"  # Path to the PCB image
-OUTPUT_FILE = "scan_v1b_400MHz_Rx_pcb_large.json"  # Default output file name
+OUTPUT_FILE = "scan_v1a_470o_400MHz_Rx_pcb_large.json"  # Default output file name
 
 # Visualization configuration
 VERTICAL_FLIP = True # Whether to flip the PCB image vertically for proper alignment
