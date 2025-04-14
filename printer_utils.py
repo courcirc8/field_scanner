@@ -10,8 +10,8 @@ import threading
 import time
 import numpy as np
 import uhd  # Add uhd import here
-from radio_utils import get_power_dBm
-from config import RX_GAIN, DEFAULT_Z, PCB_SIZE_CM, MAX_HEIGHT_COMPONENT_X_MM, MAX_HEIGHT_COMPONENT_Y_MM, BUFFER_FLUSH_COUNT  # Add BUFFER_FLUSH_COUNT import
+from radio_utils import get_power_dBm, measure_field_strength  # Add measure_field_strength import
+from config import RX_GAIN, DEFAULT_Z, PCB_SIZE_CM, MAX_HEIGHT_COMPONENT_X_MM, MAX_HEIGHT_COMPONENT_Y_MM, BUFFER_FLUSH_COUNT, PRINTER_WAIT, SIMULATE_USRP  # Add SIMULATE_USRP import
 
 def send_gcode_command(command, printer_connection):
     """
@@ -26,7 +26,7 @@ def send_gcode_command(command, printer_connection):
     """
     return printer_connection.send_gcode(command)
 
-def adjust_head(printer, usrp, streamer):
+def adjust_head(printer, usrp, streamer, simulate_usrp=SIMULATE_USRP):
     """
     Interactive graphical tool for precise probe positioning.
     
@@ -45,6 +45,7 @@ def adjust_head(printer, usrp, streamer):
         printer: Connected PrinterConnection object
         usrp: Initialized USRP radio object
         streamer: USRP streamer object
+        simulate_usrp: Boolean flag indicating whether to simulate USRP hardware
         
     Returns:
         Tuple of (x_offset, y_offset, z_height) representing the final probe position
@@ -69,15 +70,27 @@ def adjust_head(printer, usrp, streamer):
     def move_to_corner(corner):
         """Move the probe to a specified corner."""
         x, y = pcb_corners[corner]
-        # Lift the probe to a safe height before moving in X-Y
-        printer.move_probe(x=0, y=0, z=z_height + z_lift, feedrate=3000)  # Lift Z first
-        printer.send_gcode("M400")  # Add M400 to ensure movement completes
         
-        printer.move_probe(x=x + x_offset, y=y + y_offset, z=z_height + z_lift, feedrate=3000)  # Travel to the corner
-        printer.send_gcode("M400")  # Add M400 to ensure movement completes
+        # Step 1: Schedule the movement
+        printer.move_probe(x=0, y=0, z=z_height + z_lift, feedrate=3000)
+        printer.send_gcode("M400")  # Wait for movement completion
         
-        printer.move_probe(x=x + x_offset, y=y + y_offset, z=z_height - z_lift, feedrate=3000)  # Lower Z to probing height
-        printer.send_gcode("M400")  # Add M400 to ensure movement completes
+        printer.move_probe(x=x + x_offset, y=y + y_offset, z=z_height + z_lift, feedrate=3000)
+        printer.send_gcode("M400")  # Wait for movement completion
+        
+        printer.move_probe(x=x + x_offset, y=y + y_offset, z=z_height - z_lift, feedrate=3000)
+        printer.send_gcode("M400")  # Wait for movement completion
+        
+        # Step 2: Restart RSSI (flush previous readings)
+        if not simulate_usrp and streamer is not None:
+            for _ in range(BUFFER_FLUSH_COUNT):
+                try:
+                    _ = get_power_dBm(streamer, RX_GAIN, debug=False, fast_mode=True)
+                except Exception:
+                    pass
+        
+        # Step 3: Wait for stabilization
+        time.sleep(PRINTER_WAIT)
 
     def move_to_max_height():
         """Move the probe to the highest component position."""
@@ -97,6 +110,7 @@ def adjust_head(printer, usrp, streamer):
         """Measure the radio power and update the label in a thread-safe way."""
         # Add thread lock for print synchronization
         print_lock = threading.Lock()
+        usrp_lock = threading.Lock()  # Lock for USRP streamer access
         
         while not done:
             try:
@@ -107,59 +121,32 @@ def adjust_head(printer, usrp, streamer):
                 if done:
                     break
                 
-                if False:  # Simulate USRP
+                if simulate_usrp:  # Simulate USRP
                     local_power = np.random.uniform(-70, -50)  # Simulated power in dBm
                 else:
-                    # Complete stream reset with lock to prevent interleaved prints
-                    with print_lock:
-                        # CRITICAL FIX: Complete stream reset before each measurement
-                        stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont)
-                        streamer.issue_stream_cmd(stream_cmd)
-                        time.sleep(0.01)  # Small delay to ensure stop is processed
+                    # Synchronize access to the USRP streamer
+                    with usrp_lock:
+                        # Use the same RSSI measurement routine as in the main scan
+                        local_power = measure_field_strength(streamer, RX_GAIN, debug=False)
                         
-                        # Now start a new stream command
-                        stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.num_done)
-                        stream_cmd.num_samps = 1024
-                        stream_cmd.stream_now = True
-                        streamer.issue_stream_cmd(stream_cmd)
-                    
-                    # Increase buffer flush count to ensure stale data is cleared
-                    flush_count = BUFFER_FLUSH_COUNT * 2
-                    
-                    # Flush USRP buffer by taking and discarding measurements
-                    for _ in range(flush_count):
-                        try:
-                            _ = get_power_dBm(streamer, RX_GAIN, debug=False, fast_mode=True)
-                        except Exception:
-                            pass
-                    
-                    # Measure with thread-safe debug output
-                    local_power = get_power_dBm(streamer, RX_GAIN, debug=False, fast_mode=True)
-                    
-                    # Use lock for debug prints to prevent interleaving
-                    if local_power is not None and not np.isnan(local_power):
-                        with print_lock:
-                            print(f"DEBUG: Measured power: {local_power:.2f} dBm")
+                        if local_power is not None and not np.isnan(local_power):
+                            with print_lock:
+                                print(f"ODDEBUG: Measured power: {local_power:.2f} dBm")
                 
-                # IMPORTANT: Check if 'done' before updating UI to prevent crashes
-                # This is critical for thread safety
+                # Update the UI in the main thread
                 if not done and root.winfo_exists():
-                    # Use root.after with a local copy of the power value
-                    # This schedules the UI update to happen in the main thread
-                    power_val = local_power  # Make a local copy for the lambda
+                    power_val = local_power
                     if power_val is not None and not np.isnan(power_val):
                         root.after(0, lambda p=power_val: power_label.config(text=f"Power: {p:.2f} dBm"))
                     else:
                         root.after(0, lambda: power_label.config(text="Power: Measuring..."))
             except Exception as e:
-                with print_lock:  # Thread-safe error printing
+                with print_lock:
                     print(f"ERROR in measurement thread: {e}")
-                # If we get an exception, add a small delay to prevent tight loops
-                time.sleep(0.05)
+                time.sleep(0.05)  # Small delay to avoid tight loops
             
-            # Sleep to avoid tight loop - reduce even further
-            time.sleep(0.1)  # Reduced from 0.2 to 0.1 seconds for more responsive updates
-    
+            time.sleep(0.1)  # Reduced loop frequency for stability
+
     def done_callback():
         """Return to the correct Z height and exit."""
         nonlocal done
@@ -198,9 +185,23 @@ def adjust_head(printer, usrp, streamer):
         """Adjust the Z height by a specified delta without moving X or Y."""
         nonlocal z_height
         z_height += delta
-        printer.send_gcode(f"G1 Z{z_height:.3f} F3000")  # Only adjust Z
-        printer.send_gcode("M400")  # Add M400 to ensure movement completes
-        z_label.config(text=f"Defined Z: {z_height:.2f} mm")  # Update the Z reference display
+        
+        # Step 1: Schedule the movement
+        printer.send_gcode(f"G1 Z{z_height:.3f} F3000")
+        printer.send_gcode("M400")  # Wait for movement completion
+        
+        # Step 2: Restart RSSI (flush previous readings)
+        if not simulate_usrp and streamer is not None:
+            for _ in range(BUFFER_FLUSH_COUNT):
+                try:
+                    _ = get_power_dBm(streamer, RX_GAIN, debug=False, fast_mode=True)
+                except Exception:
+                    pass
+        
+        # Step 3: Wait for stabilization
+        time.sleep(PRINTER_WAIT)
+        
+        z_label.config(text=f"Defined Z: {z_height:.2f} mm")
 
     def adjust_x(delta):
         """Adjust the X offset."""

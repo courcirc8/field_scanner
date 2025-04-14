@@ -40,62 +40,57 @@ def measure_field_strength(streamer, rx_gain, debug=True):
         Field strength in dBm, or None if measurement fails
     """
     try:
-        # Increase attempts to 4 for more reliable measurements
+        # Step 1: Stop any ongoing streaming to clear the buffer
+        stop_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont)
+        streamer.issue_stream_cmd(stop_cmd)
+        time.sleep(0.01)  # Small delay to ensure the stop command is processed
+        
+        # Step 2: Start a fresh stream
+        start_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.start_cont)
+        start_cmd.stream_now = True
+        streamer.issue_stream_cmd(start_cmd)
+        
+        # Step 3: Discard initial samples to flush the buffer
+        discard_count = 10
+        buffer = np.zeros(1024, dtype=np.complex64)
+        metadata = RXMetadata()
+        for _ in range(discard_count):
+            try:
+                streamer.recv(buffer, metadata, timeout=0.1)
+            except RuntimeError:
+                pass  # Ignore errors during discard phase
+        
+        # Step 4: Perform the actual measurement
         max_attempts = 4
         for attempt in range(1, max_attempts + 1):
-            # Issue a fresh stream command to ensure streaming is active
-            stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.num_done)
-            stream_cmd.num_samps = 1024  # Request specific number of samples
-            stream_cmd.stream_now = True
-            streamer.issue_stream_cmd(stream_cmd)
-            
-            # Receive samples
-            buffer = np.zeros(1024, dtype=np.complex64)
-            metadata = RXMetadata()
-            num_rx_samps = streamer.recv(buffer, metadata, 0.5)  # Add timeout of 0.5s
-
-            if metadata.error_code != uhd.types.RXMetadataErrorCode.none:
-                if debug:
-                    synchronized_print(f"WARNING: RX Metadata error on attempt {attempt}/{max_attempts}: {metadata.error_code}")
+            try:
+                stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.num_done)
+                stream_cmd.num_samps = 1024
+                stream_cmd.stream_now = True
+                streamer.issue_stream_cmd(stream_cmd)
                 
-                # Try to recover by resetting the stream
-                stop_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont)
-                streamer.issue_stream_cmd(stop_cmd)
-                time.sleep(0.1)
-                continue
-            
-            if num_rx_samps == 0:
-                if debug:
-                    synchronized_print(f"WARNING: No samples received on attempt {attempt}/{max_attempts}")
-                continue
+                num_rx_samps = streamer.recv(buffer, metadata, timeout=0.5)
+                if metadata.error_code != uhd.types.RXMetadataErrorCode.none:
+                    if debug:
+                        synchronized_print(f"WARNING: RX Metadata error: {metadata.error_code}")
+                    continue
                 
-            # Check for valid signal (non-zero amplitude)
-            valid_samples = buffer[:num_rx_samps]
-            sample_amplitude = np.mean(np.abs(valid_samples))
-            
-            if sample_amplitude < 1e-9:  # Extremely low signal - likely no transmission
+                if num_rx_samps > 0:
+                    valid_samples = buffer[:num_rx_samps]
+                    power_linear = np.mean(np.abs(valid_samples)**2)
+                    power_dbm = 10 * np.log10(power_linear + 1e-12) + 30
+                    input_power_dbm = power_dbm - rx_gain
+                    return input_power_dbm
+            except Exception as e:
                 if debug:
-                    synchronized_print(f"WARNING: Signal amplitude too low on attempt {attempt}/{max_attempts}: {sample_amplitude:.2e}")
-                continue
-            
-            # If we got here, we have a valid measurement
-            power_linear = np.mean(np.abs(valid_samples)**2)
-            power_dbm = 10 * np.log10(power_linear + 1e-12) + 30  # Convert to dBm
-            input_power_dbm = power_dbm - rx_gain  # Subtract receiver gain
-            
-            if debug:
-                synchronized_print(f"DEBUG: Success on attempt {attempt}/{max_attempts}, received {num_rx_samps} samples, amplitude: {sample_amplitude:.2e}, power: {input_power_dbm:.2f} dBm")
-                
-            return input_power_dbm
-            
-        # If we get here, all attempts failed
+                    synchronized_print(f"ERROR during measurement attempt {attempt}: {e}")
+        
         if debug:
-            synchronized_print(f"ERROR: All {max_attempts} measurement attempts failed")
+            synchronized_print("ERROR: All measurement attempts failed")
         return None
-            
-    except RuntimeError as e:
+    except Exception as e:
         if debug:
-            synchronized_print(f"Error measuring field strength: {e}")
+            synchronized_print(f"Critical error in measure_field_strength: {e}")
         return None
 
 def initialize_radio(center_frequency, rx_gain, equivalent_bw):
@@ -227,6 +222,7 @@ def get_power_dBm(streamer, rx_gain, num_samples=1024, num_averages=10, debug=Tr
         attempts = 0
         max_attempts = num_averages * (2 if fast_mode else 3)  # Fewer attempts for fast mode
         
+        # Loop to collect multiple measurements
         while len(power_linear) < num_averages and attempts < max_attempts:
             attempts += 1
             try:
@@ -241,7 +237,7 @@ def get_power_dBm(streamer, rx_gain, num_samples=1024, num_averages=10, debug=Tr
                     continue
                 
                 if num_rx_samps > 0:
-                    # Calculate power only from valid samples
+                    # Calculate power for valid samples
                     valid_samples = buffer[:num_rx_samps]
                     sample_power = np.mean(np.abs(valid_samples)**2)
                     if not np.isnan(sample_power) and sample_power > 0:
@@ -270,6 +266,7 @@ def get_power_dBm(streamer, rx_gain, num_samples=1024, num_averages=10, debug=Tr
         if debug and not fast_mode:
             synchronized_print(f"DEBUG: Obtained {len(power_linear)} valid power measurements")
             
+        # Calculate the average power
         avg_power_linear = np.mean(power_linear)
         power_dbm = 10 * np.log10(avg_power_linear + 1e-12) + 30
         input_power_dbm = power_dbm - rx_gain

@@ -20,7 +20,7 @@ from d3d_printer import PrinterConnection
 from file_utils import show_rotate_probe_dialog, show_rotate_probe_dialog_45
 from config import (x_values, y_values, PCB_IMAGE_PATH, CENTER_FREQUENCY, RX_GAIN, nb_avera, 
                   EQUIVALENT_BW, PRINTER_IP, PRINTER_PORT, SIMULATE_USRP, PCB_SIZE_CM, 
-                  RESOLUTION, DEBUG_ALL, DEBUG_INTERRACTIVE, MOVEMENT_SETTLE_DELAY, BUFFER_FLUSH_COUNT)
+                  RESOLUTION, DEBUG_ALL, DEBUG_INTERRACTIVE, MOVEMENT_SETTLE_DELAY, BUFFER_FLUSH_COUNT, PRINTER_WAIT, PRINTER_WAIT_LINE)
 import matplotlib.pyplot as plt
 import time
 import gc
@@ -68,37 +68,53 @@ def scan_single_orientation(file_name, printer, usrp, streamer, x_offset, y_offs
         
         # Main scanning loop
         for y_idx, y in enumerate(y_values):
+            # Wait for PRINTER_WAIT_LINE at the start of each new line
+            time.sleep(PRINTER_WAIT_LINE)
+            
+            # Perform an additional RSSI measurement at the start of the line
+            try:
+                initial_field_strength = measure_field_strength(
+                    streamer, RX_GAIN, debug=(DEBUG_ALL or DEBUG_INTERRACTIVE)
+                )
+                if initial_field_strength is not None:
+                    print(f"DEBUG: Initial RSSI at start of line {y_idx+1}/{len(y_values)} (y={y:.3f}): {initial_field_strength:.2f} dBm")
+            except Exception as e:
+                if DEBUG_ALL or DEBUG_INTERRACTIVE:
+                    print(f"Error measuring initial RSSI at start of line {y_idx+1}: {e}")
+
             for x_idx, x in enumerate(x_values):
-                # Move the probe to the (x, y) position using the adjusted Z height
-                if DEBUG_ALL or DEBUG_INTERRACTIVE or not first_line_complete:
-                    print(f"Moving probe to X={x:.3f}, Y={y:.3f}, Z={z_height:.3f}")
+                # Step 1: Schedule the movement
+                printer.move_probe(
+                    x=(x * 10) + x_offset,
+                    y=(y * 10) + y_offset,
+                    z=z_height,
+                    debug=(DEBUG_ALL or DEBUG_INTERRACTIVE or not first_line_complete)
+                )
                 
-                printer.move_probe(x=(x * 10) + x_offset, y=(y * 10) + y_offset, z=z_height, 
-                                  debug=(DEBUG_ALL or DEBUG_INTERRACTIVE or not first_line_complete))
-                
-                # Send M400 command to wait for all movements to complete
+                # Step 2: Wait for movement completion
                 printer.send_gcode("M400")
                 if DEBUG_ALL or DEBUG_INTERRACTIVE:
                     print("Waiting for printer movement to complete (M400)")
                 
-                # Add a small delay to allow mechanics to settle and USRP buffer to stabilize
-                time.sleep(MOVEMENT_SETTLE_DELAY)
-                
-                # Flush USRP buffer by taking and discarding measurements
+                # Step 3: Restart RSSI (flush previous readings)
                 if not SIMULATE_USRP and streamer is not None:
                     for _ in range(BUFFER_FLUSH_COUNT):
                         try:
-                            # Discard measurement to flush buffer
+                            # Explicitly flush the buffer before measurement
                             _ = measure_field_strength(streamer, RX_GAIN, debug=False)
                         except Exception as e:
                             if DEBUG_ALL or DEBUG_INTERRACTIVE:
                                 print(f"Buffer flush attempt failed: {e}")
                 
-                # Measure the field strength
+                # Step 4: Wait for stabilization
+                time.sleep(PRINTER_WAIT)
+                
+                # Step 5: Perform RSSI measurement
                 try:
-                    # Take actual measurement after buffer flush
-                    field_strength = measure_field_strength(streamer, RX_GAIN, 
-                                                          debug=(DEBUG_ALL or DEBUG_INTERRACTIVE or not first_line_complete))
+                    field_strength = measure_field_strength(
+                        streamer, RX_GAIN,
+                        debug=(DEBUG_ALL or DEBUG_INTERRACTIVE or not first_line_complete)
+                    )
                     if field_strength is not None:
                         power_values.append(field_strength)
                         if DEBUG_INTERRACTIVE:
@@ -220,6 +236,9 @@ def scan_field(file_name):
         print("Starting graphical adjustment of the probe head...")
         x_offset, y_offset, z_height = adjust_head(printer, usrp, streamer)
         print("Graphical adjustment completed.")
+        
+        # Ensure the measure_power thread is terminated before proceeding
+        time.sleep(0.5)  # Allow the thread to fully terminate
         
         # Add a delay after GUI operations before starting the next GUI
         # This helps ensure Tkinter resources are properly cleaned up

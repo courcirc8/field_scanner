@@ -14,7 +14,7 @@ Implemented Features:
 
 import requests
 import time
-from config import DEFAULT_Z, DEBUG_ALL, PRINTER_PASSWORD
+from config import DEFAULT_Z, DEBUG_ALL, PRINTER_PASSWORD, PRINTER_WAIT
 
 class PrinterConnection:
     """Class to handle 3D printer connection and control via the Duet HTTP API."""
@@ -104,7 +104,17 @@ class PrinterConnection:
         
         if debug:
             print(f"DEBUG: Moving probe to: X={x}, Y={y}, Z={z}, F={feedrate}")
-        return self.send_gcode(command, debug=debug)
+        
+        # Step 1: Schedule the movement
+        response = self.send_gcode(command, debug=debug)
+        
+        # Step 2: Wait for movement completion
+        self.send_gcode("M400", debug=debug)
+        
+        # Step 3: Wait for stabilization
+        time.sleep(PRINTER_WAIT)
+        
+        return response
     
     def initialize_printer(self):
         """Initialize the printer (home axes, set units, etc.)."""
