@@ -236,6 +236,28 @@ def plot_field(input_file, pcb_image_path, save_path=None, ax=None, vmin=None, v
 
             button.on_clicked(close_plot)
 
+        # Add a "Plot Contour" button to overlay contour lines
+        ax_button_contour = plt.axes([0.85, 0.1, 0.1, 0.05])  # Button at the bottom right
+        button_contour = Button(ax_button_contour, "Plot Contour", color="lightgray", hovercolor="gray")
+
+        def plot_contour(event):
+            """Overlay contour lines on the plot."""
+            try:
+                # Ensure Z is available for contour plotting
+                if not is_1d_data:
+                    grid_x, grid_y = np.linspace(extent[0], extent[1], 200), np.linspace(extent[2], extent[3], 200)
+                    grid_X, grid_Y = np.meshgrid(grid_x, grid_y)
+                    Z = griddata((x, y), field_strength, (grid_X, grid_Y), method='cubic')
+                    ax.contour(grid_X, grid_Y, Z, levels=10, colors='black', linewidths=0.5)
+                    fig.canvas.draw_idle()
+                    print("Contour lines added to the plot.")
+                else:
+                    print("Contour lines are not supported for 1D data.")
+            except Exception as e:
+                print(f"Error adding contour lines: {e}")
+
+        button_contour.on_clicked(plot_contour)
+
         # Save the plot as an image file if a save path is provided
         if save_path:
             plt.savefig(save_path, format="png", dpi=300)

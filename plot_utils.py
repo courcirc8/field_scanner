@@ -606,35 +606,38 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
     button_width = 0.12
     button_height = 0.05
     button_spacing = 0.015
-    button_start_y = 0.65
+    button_start_y = 0.75  # Raise the buttons higher on the plot
     
-    # Create button areas - stack vertically on left side
-    button0_ax = plt.axes([buttons_left_pos, button_start_y, button_width, button_height])
-    button90_ax = plt.axes([buttons_left_pos, button_start_y - (button_height + button_spacing), button_width, button_height])
-    button45_ax = plt.axes([buttons_left_pos, button_start_y - 2 * (button_height + button_spacing), button_width, button_height])
-    button_combined_ax = plt.axes([buttons_left_pos, button_start_y - 3 * (button_height + button_spacing), button_width, button_height])
-    
-    # Add current direction button below others
-    button_current_ax = plt.axes([buttons_left_pos, button_start_y - 4 * (button_height + button_spacing), button_width, button_height])
-    
-    # Add Done button at the bottom
-    #button_done_ax = plt.axes([buttons_left_pos, button_start_y - 5 * (button_height + button_spacing), button_width, button_height])
-    
-    # Add to plot_with_selector function, after the button_current_ax creation:
-    
-    # Add alternative current direction button below the regular one
-    button_alt_current_ax = plt.axes([buttons_left_pos, button_start_y - 5 * (button_height + button_spacing), button_width, button_height])
-    
-    # Move Done button down one position
-    button_done_ax = plt.axes([buttons_left_pos, button_start_y - 6 * (button_height + button_spacing), button_width, button_height])
-    
-    # Add transparency slider on the left - moved down to avoid overlap
-    slider_ax = plt.axes([buttons_left_pos, 0.15, button_width, 0.03])  # Moved down from 0.2 to 0.15
-    
-    # Add debug intensity button at the bottom left
-    #button_debug_ax = plt.axes([0.05, 0.05, 0.12, 0.05])
-    #button_debug = Button(button_debug_ax, 'Debug Intensity', color='orange')
-    #button_debug.on_clicked(show_debug_intensity)
+    # Variable to store the last selected angle file
+    last_selected_file = file_0d  # Default to 0° file
+ 
+    def plot_contour(event):
+        """Overlay contour lines on the current plot for the last selected angle."""
+        try:
+            # Load and prepare data for contour plotting
+            current_data, results, metadata, Z, extent = load_and_prepare_data(last_selected_file)
+            grid_x, grid_y = np.linspace(extent[0], extent[1], 200), np.linspace(extent[2], extent[3], 200)
+            grid_X, grid_Y = np.meshgrid(grid_x, grid_y)
+            ax = fig.main_plot_ax
+            ax.contour(grid_X, grid_Y, Z, levels=10, colors='black', linewidths=0.5)
+            fig.canvas.draw_idle()
+            print(f"Contour lines added for file: {last_selected_file}")
+        except Exception as e:
+            print(f"Error adding contour lines: {e}")
+
+    # Define button positions
+    button_contour_ax = plt.axes([buttons_left_pos, button_start_y, button_width, button_height])  # Add Contour button
+    button0_ax = plt.axes([buttons_left_pos, button_start_y - (button_height + button_spacing), button_width, button_height])  # 0° Scan button
+    button90_ax = plt.axes([buttons_left_pos, button_start_y - 2 * (button_height + button_spacing), button_width, button_height])  # 90° Scan button
+    button45_ax = plt.axes([buttons_left_pos, button_start_y - 3 * (button_height + button_spacing), button_width, button_height])  # 45° Scan button
+    button_combined_ax = plt.axes([buttons_left_pos, button_start_y - 4 * (button_height + button_spacing), button_width, button_height])  # Combined Scan button
+    button_current_ax = plt.axes([buttons_left_pos, button_start_y - 5 * (button_height + button_spacing), button_width, button_height])  # Current button
+    button_alt_current_ax = plt.axes([buttons_left_pos, button_start_y - 6 * (button_height + button_spacing), button_width, button_height])  # Alt Current button
+    button_done_ax = plt.axes([buttons_left_pos, button_start_y - 7 * (button_height + button_spacing), button_width, button_height])  # Done button
+
+    # Adjust the position of the alpha slider to be 3 cm higher
+    slider_ax = plt.axes([0.25, 0.2, 0.5, 0.03], facecolor="lightgray")  # Moved up from 0.1 to 0.15
+    alpha_slider = Slider(slider_ax, 'Transparency', 0.0, 1.0, valinit=0.5)
     
     # Create a dictionary to store plot objects
     plot_objects = {
@@ -655,13 +658,10 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
     fig.file_0d = file_0d
     fig.file_90d = file_90d
     fig.file_45d = file_45d
-    
-    # Create transparency slider - MOVED THIS HERE TO FIX THE ERROR
-    alpha_slider = Slider(slider_ax, 'PCB', 0.0, 1.0, valinit=0.5)
-    
-    # Create a variable to store our colorbar reference
-    colorbar_obj = None
 
+    # Initialize colorbar_obj in the enclosing scope
+    colorbar_obj = None  # This ensures it is defined before being referenced as nonlocal
+    
     def load_and_prepare_data(file_path):
         """Load data and prepare for plotting"""
         with open(file_path, 'r') as f:
@@ -699,7 +699,7 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
     
     def update_plot():
         """Update the plot with current data"""
-        nonlocal current_data, colorbar_obj  # Include colorbar_obj in the same nonlocal declaration
+        nonlocal current_data, colorbar_obj  # Include colorbar_obj in the nonlocal declaration
         print(f"Updating plot with file: {current_file}")
         
         try:
@@ -805,37 +805,41 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
     
     def show_0d(event):
         """Switch to 0° scan view"""
-        nonlocal current_file, current_title
+        nonlocal current_file, current_title, last_selected_file
         current_file = file_0d
         current_title = "0° Scan"
+        last_selected_file = file_0d
         fig.current_file = current_file  # Update the figure's current_file
         print(f"Switching to 0° scan view: {file_0d}")  # Debug message
         update_plot()  # Ensure the plot is updated
     
     def show_90d(event):
         """Switch to 90° scan view"""
-        nonlocal current_file, current_title
+        nonlocal current_file, current_title, last_selected_file
         current_file = file_90d
         current_title = "90° Scan"
+        last_selected_file = file_90d
         fig.current_file = current_file  # Update the figure's current_file
         print(f"Switching to 90° scan view: {file_90d}")  # Debug message
         update_plot()  # Ensure the plot is updated
     
     def show_45d(event):
         """Switch to 45° scan view"""
-        nonlocal current_file, current_title
+        nonlocal current_file, current_title, last_selected_file
         if file_45d and os.path.exists(file_45d):
             current_file = file_45d
             current_title = "45° Scan"
+            last_selected_file = file_45d
             fig.current_file = current_file  # Update the figure's current_file
             print(f"Switching to 45° scan view: {file_45d}")  # Debug message
             update_plot()  # Ensure the plot is updated
     
     def show_combined(event):
         """Switch to combined view"""
-        nonlocal current_file, current_title
+        nonlocal current_file, current_title, last_selected_file
         current_file = combined_file
         current_title = "Combined Scan"
+        last_selected_file = combined_file
         fig.current_file = current_file  # Update the figure's current_file
         print(f"Switching to combined scan view: {combined_file}")  # Debug message
         update_plot()  # Ensure the plot is updated
@@ -845,6 +849,11 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
         plt.close(fig)
         print("Plot window closed")
     
+
+    # Add "Plot Contour" button above the "0° Scan" button
+    button_contour = Button(button_contour_ax, 'Plot Contour', color='lightgray', hovercolor='gray')
+    button_contour.on_clicked(plot_contour)  # Connect to the correct handler
+
     # Create the buttons with updated styles - fix button handlers
     button0 = Button(button0_ax, '0° Scan', color='lightblue')
     button0.on_clicked(show_0d)  # Connect to the correct handler
@@ -874,7 +883,7 @@ def plot_with_selector(file_0d, file_90d, file_45d=None):
     button_done.on_clicked(exit_plot)  # Connect to the exit handler
     
     # Add a label for the transparency slider - moved down to match slider
-    fig.text(buttons_left_pos + button_width/2, 0.20, 'Adjust Transparency:', ha='center')
+    fig.text(0.5, 0.05, 'Adjust Transparency:', ha='center')
     
     # Create an axes for probe angle indicators at the bottom of the plot - lower position
     probe_angle_ax = plt.axes([0.25, 0.07, 0.55, 0.08], frameon=False)  # Moved from 0.10 to 0.07

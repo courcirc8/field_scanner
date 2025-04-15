@@ -285,6 +285,8 @@ def scan_field(file_name):
         save_scan_results(file_combined, data_combined["results"], data_combined["metadata"])
         print(f"Combined results saved to {file_combined}")
         
+        # Display the complete scan results
+        print("Displaying the complete scan results...")
         plot_with_selector(file_0d, file_90d, file_45d)
 
     except KeyboardInterrupt:
